@@ -2,34 +2,34 @@
 export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 
 # ==============================================================================
-# CONFIGURAZIONE UTENTE
+# USER CONFIGURATION
 # ==============================================================================
 
-# 1. TARGET E DURATA
+# 1. TARGET AND DURATION
 PING_TARGET="8.8.8.8"
 PING_DURATION=30
 
-# 2. SOGLIA PER TRACEROUTE/MTR (in ms)
-# Se il ping medio supera questo valore, viene eseguito un MTR e salvato nel log.
+# 2. THRESHOLD FOR TRACEROUTE/MTR (in ms)
+# If average ping exceeds this value, an MTR is executed and logged.
 TRIGGER_LATENCY=30
 
-# 3. PERCORSI WEB E FILE
+# 3. WEB AND FILE PATHS
 WEB_DIR="/opt/var/www"
 HTML_FILENAME="pingtool.html"
 
-# 4. STORICO GRAFICI
+# 4. CHART HISTORY
 MAX_DISPLAY_POINTS=2000
 
-# 5. DATABASE E RETENTION
+# 5. DATABASE AND RETENTION
 DB_DIR="/opt/etc/pingtool"
 DB_FILE="$DB_DIR/pingtool.db"
 RETENTION_DAYS=45
 
 # ==============================================================================
-# LOGICA DI MONITORAGGIO
+# MONITORING LOGIC
 # ==============================================================================
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] pingtool: Avvio test verso $PING_TARGET..."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] pingtool: Starting test towards $PING_TARGET..."
 
 mkdir -p "$DB_DIR"
 if [ ! -d "$WEB_DIR" ]; then mkdir -p "$WEB_DIR"; fi
@@ -42,18 +42,18 @@ fi
 
 TMP_PING="/tmp/pingtool_ping_output.tmp"
 
-# ESECUZIONE PING
+# EXECUTE PING
 ping -w "$PING_DURATION" -i 1 "$PING_TARGET" > "$TMP_PING"
 
-# ANALISI DATI
+# DATA ANALYSIS
 LOSS=$(grep -oP '\d+(?=% packet loss)' "$TMP_PING")
 if [ -z "$LOSS" ]; then LOSS=100; fi
 
-# Estrazione Ping Medio (pulito da 'ms')
+# Extract Average Ping (cleaned of 'ms')
 AVG_PING=$(tail -n 1 "$TMP_PING" | awk -F '/' '{print $5}' | sed 's/[^0-9.]//g')
 if [ -z "$AVG_PING" ] || [ "$LOSS" -eq 100 ]; then AVG_PING=0; fi
 
-# CALCOLO JITTER
+# CALCULATE JITTER
 if [ "$LOSS" -lt 100 ]; then
     TIMES=$(grep "time=" "$TMP_PING" | sed 's/.*time=\([0-9.]*\) .*/\1/')
     JITTER=$(echo "$TIMES" | awk 'BEGIN {prev=0;td=0;c=0;f=1} {cur=$1; if(f==0){d=cur-prev; if(d<0)d=-d; td+=d; c++} prev=cur; f=0} END {if(c>0)printf "%.2f",td/c; else print "0"}')
@@ -64,33 +64,33 @@ fi
 rm "$TMP_PING"
 NOW=$(date +%s)
 
-# SALVATAGGIO SU DB
+# SAVE TO DB
 sqlite3 "$DB_FILE" "INSERT INTO stats (timestamp, ping, jitter, loss) VALUES ($NOW, $AVG_PING, $JITTER, $LOSS);"
 sqlite3 "$DB_FILE" "DELETE FROM stats WHERE timestamp < strftime('%s', 'now', '-$RETENTION_DAYS days');"
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] RISULTATO: Ping=$AVG_PING ms | Jitter=$JITTER ms | Loss=$LOSS%"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] RESULT: Ping=$AVG_PING ms | Jitter=$JITTER ms | Loss=$LOSS%"
 
 # ==============================================================================
-# MTR DIAGNOSTICS (LOGICA AGGIUNTA)
+# MTR DIAGNOSTICS (ADDED LOGIC)
 # ==============================================================================
 
-# Usiamo awk per il confronto perché AVG_PING è un numero decimale (float)
+# We use awk for comparison because AVG_PING is a decimal (float)
 IS_HIGH_PING=$(awk -v p="$AVG_PING" -v t="$TRIGGER_LATENCY" 'BEGIN {print (p > t ? 1 : 0)}')
 
-# Se il ping è alto OPPURE c'è Packet Loss > 0%
+# If ping is high OR Packet Loss > 0%
 if [ "$IS_HIGH_PING" -eq 1 ] || [ "$LOSS" -gt 0 ]; then
-    echo "!!! ATTENZIONE: Ping alto ($AVG_PING ms > $TRIGGER_LATENCY ms) o Packet Loss rilevato."
-    echo "!!! Esecuzione MTR diagnostico verso $PING_TARGET..."
+    echo "!!! WARNING: High Ping ($AVG_PING ms > $TRIGGER_LATENCY ms) or Packet Loss detected."
+    echo "!!! Running diagnostic MTR towards $PING_TARGET..."
     echo "--------------------------------------------------------"
     
-    # Esegue MTR:
-    # -r: Report mode (testo semplice)
-    # -w: Wide (non tagliare i nomi lunghi)
-    # -c 10: Invia 10 pacchetti per ogni hop (buon bilanciamento velocità/precisione)
+    # Runs MTR:
+    # -r: Report mode (plain text)
+    # -w: Wide (don't cut long names)
+    # -c 10: Send 10 packets per hop (good speed/accuracy balance)
     if [ -x "$(command -v mtr)" ]; then
         mtr -r -w -c 10 "$PING_TARGET"
     else
-        echo "Errore: 'mtr' non installato. Eseguo traceroute standard."
+        echo "Error: 'mtr' not installed. Running standard traceroute."
         traceroute "$PING_TARGET"
     fi
     
@@ -98,7 +98,7 @@ if [ "$IS_HIGH_PING" -eq 1 ] || [ "$LOSS" -gt 0 ]; then
 fi
 
 # ==============================================================================
-# GENERAZIONE HTML
+# HTML GENERATION
 # ==============================================================================
 
 JSON_DATA=$(sqlite3 "$DB_FILE" "SELECT timestamp, ping, jitter, loss FROM stats ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS;" | \
@@ -106,11 +106,11 @@ awk -F'|' '{printf "{x:%s000,p:%s,j:%s,l:%s},", $1, $2, $3, $4}' | sed 's/,$//')
 
 cat <<EOF > "$WEB_DIR/$HTML_FILENAME"
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>pingtool Keenetic</title>
+    <title>Keenetic PingTool</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <style>
@@ -134,27 +134,27 @@ cat <<EOF > "$WEB_DIR/$HTML_FILENAME"
 </head>
 <body>
     <div class="container">
-        <h2 style="text-align:center; color:#2c3e50; margin-bottom:30px;">Monitoraggio Connessione ($PING_TARGET)</h2>
+        <h2 style="text-align:center; color:#2c3e50; margin-bottom:30px;">Connection Monitor ($PING_TARGET)</h2>
         <div class="status-grid">
-            <div class="card ping"><h3>Ping Ultimo</h3><div class="value">${AVG_PING} <small>ms</small></div></div>
-            <div class="card jitter"><h3>Jitter Ultimo</h3><div class="value">${JITTER} <small>ms</small></div></div>
+            <div class="card ping"><h3>Last Ping</h3><div class="value">${AVG_PING} <small>ms</small></div></div>
+            <div class="card jitter"><h3>Last Jitter</h3><div class="value">${JITTER} <small>ms</small></div></div>
             <div class="card loss"><h3>Packet Loss</h3><div class="value">${LOSS}<small>%</small></div></div>
         </div>
         <div class="charts-wrapper">
             <div class="chart-box">
-                <div class="chart-header-row"><div class="chart-title" style="color:#2980b9">Latenza (Ping)</div><label class="scale-toggle"><input type="checkbox" onchange="toggleScale(this, 'pingChart')"> Scala Log</label></div>
+                <div class="chart-header-row"><div class="chart-title" style="color:#2980b9">Latency (Ping)</div><label class="scale-toggle"><input type="checkbox" onchange="toggleScale(this, 'pingChart')"> Log Scale</label></div>
                 <div class="canvas-container"><canvas id="pingChart"></canvas></div>
             </div>
             <div class="chart-box">
-                <div class="chart-header-row"><div class="chart-title" style="color:#d35400">Stabilità (Jitter)</div><label class="scale-toggle"><input type="checkbox" onchange="toggleScale(this, 'jitterChart')"> Scala Log</label></div>
+                <div class="chart-header-row"><div class="chart-title" style="color:#d35400">Stability (Jitter)</div><label class="scale-toggle"><input type="checkbox" onchange="toggleScale(this, 'jitterChart')"> Log Scale</label></div>
                 <div class="canvas-container"><canvas id="jitterChart"></canvas></div>
             </div>
             <div class="chart-box">
-                <div class="chart-header-row"><div class="chart-title" style="color:#c0392b">Packet Loss</div><label class="scale-toggle"><input type="checkbox" onchange="toggleScale(this, 'lossChart')"> Scala Log</label></div>
+                <div class="chart-header-row"><div class="chart-title" style="color:#c0392b">Packet Loss</div><label class="scale-toggle"><input type="checkbox" onchange="toggleScale(this, 'lossChart')"> Log Scale</label></div>
                 <div class="canvas-container"><canvas id="lossChart"></canvas></div>
             </div>
         </div>
-        <div class="footer">Ultimo aggiornamento: $(date "+%d/%m/%Y %H:%M:%S") | Retention: $RETENTION_DAYS giorni</div>
+        <div class="footer">Last update: $(date "+%d/%m/%Y %H:%M:%S") | Retention: $RETENTION_DAYS days</div>
     </div>
     <script>
         const rawData = [$JSON_DATA].reverse();
