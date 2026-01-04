@@ -52,3 +52,33 @@ Add this line:
 The script generates pingtool.html in /opt/var/www. If you have the Entware Web Server (nginx/lighttpd) running, you can access it via browser: http://192.168.1.1:81/pingtool.html (Port depends on your setup).
 
 Alternatively, expose the folder via SMB or FTP to open the file locally.
+
+## Web Server Setup (Lighttpd)
+
+To view the dashboard in your browser, ensure **Lighttpd** is configured to serve the directory where the script saves the HTML file (`/opt/var/www`).
+
+1. **Install Lighttpd** (if not installed):
+   ```bash
+   opkg install lighttpd
+   ```
+
+2. **Configure Lighttpd:** Edit the configuration file:
+   ```bash
+   nano /opt/etc/lighttpd/lighttpd.conf
+   ```
+Make sure these two lines are set correctly:
+	```bash
+   # The folder where connmon.html is saved
+	server.document-root = "/opt/var/www" 
+
+	# Use port 81 (or 8081) to avoid conflict with Router Admin UI
+	server.port = 81
+   ```
+
+3. **Restart the Service:**
+   ```bash
+   /opt/etc/init.d/S80lighttpd restart
+   ```
+
+4. **Access the Dashboard:** Open your browser and navigate to:
+http://YOUR_ROUTER_IP:81/connmon.html
