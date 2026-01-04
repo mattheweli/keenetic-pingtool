@@ -34,12 +34,12 @@ WEB_DIR: Where to save the HTML file (Default: /opt/var/www)
 
 ## Usage
 
-# Manual Run
+### Manual Run
 ```bash
 /opt/bin/pingtool.sh
 ```
 
-# Automation (Cron)
+### Automation (Cron)
 Add a cron job to run it every minute. Edit crontab:
 ```bash
 nano /opt/etc/crontab
