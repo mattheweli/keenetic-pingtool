@@ -21,7 +21,7 @@ opkg install bash sqlite3-cli ping mtr
 
 Note: traceroute is used as a fallback if mtr is missing.
 
-##Installation
+## Installation
 **Download the script** Place the script in /opt/bin/ (or any persistent folder).
 
 **Configuration** Edit the top section of pingtool.sh to customize:
@@ -32,14 +32,14 @@ TRIGGER_LATENCY: Threshold in ms to trigger MTR (Default: 30ms)
 
 WEB_DIR: Where to save the HTML file (Default: /opt/var/www)
 
-##Usage
+## Usage
 
-#Manual Run
+# Manual Run
 ```bash
 /opt/bin/pingtool.sh
 ```
 
-#Automation (Cron)
+# Automation (Cron)
 Add a cron job to run it every minute. Edit crontab:
 ```bash
 nano /opt/etc/crontab
@@ -50,7 +50,7 @@ Add this line:
 */1 * * * * root /opt/bin/pingtool.sh > /dev/null 2>&1
 ```
 
-##Viewing the Dashboard
+## Viewing the Dashboard
 The script generates pingtool.html in /opt/var/www. If you have the Entware Web Server (nginx/lighttpd) running, you can access it via browser: http://192.168.1.1:81/pingtool.html (Port depends on your setup).
 
 Alternatively, expose the folder via SMB or FTP to open the file locally.
