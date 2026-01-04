@@ -1,3 +1,5 @@
+# Keenetic PingTool
+
 It logs Ping, Jitter, and Packet Loss to a SQLite database, visualizes the data via a responsive HTML5 dashboard using Chart.js, and automatically runs MTR diagnostics when latency spikes.
 
 ## Features
@@ -58,27 +60,27 @@ Alternatively, expose the folder via SMB or FTP to open the file locally.
 To view the dashboard in your browser, ensure **Lighttpd** is configured to serve the directory where the script saves the HTML file (`/opt/var/www`).
 
 1. **Install Lighttpd** (if not installed):
-   ```bash
-   opkg install lighttpd
-   ```
+```bash
+opkg install lighttpd
+```
 
 2. **Configure Lighttpd:** Edit the configuration file:
-   ```bash
-   nano /opt/etc/lighttpd/lighttpd.conf
-   ```
+```bash
+nano /opt/etc/lighttpd/lighttpd.conf
+```
 Make sure these two lines are set correctly:
-	```bash
-   # The folder where connmon.html is saved
-	server.document-root = "/opt/var/www" 
-
-	# Use port 81 (or 8081) to avoid conflict with Router Admin UI
-	server.port = 81
-   ```
+```bash
+# The folder where connmon.html is saved
+server.document-root = "/opt/var/www" 
+# Use port 81 (or 8081) to avoid conflict with Router Admin UI
+server.port = 81
+```
 
 3. **Restart the Service:**
-   ```bash
-   /opt/etc/init.d/S80lighttpd restart
-   ```
+```bash
+/opt/etc/init.d/S80lighttpd restart
+```
 
 4. **Access the Dashboard:** Open your browser and navigate to:
 http://YOUR_ROUTER_IP:81/connmon.html
+
