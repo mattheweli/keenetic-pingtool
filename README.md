@@ -84,3 +84,4 @@ server.port = 81
 4. **Access the Dashboard:** Open your browser and navigate to:
 http://YOUR_ROUTER_IP:81/connmon.html
 
+![alt text](https://github.com/mattheweli/keenetic-pingtool/blob/main/Screenshot%202026-01-04%20155808.png)
