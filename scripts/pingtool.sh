@@ -117,7 +117,7 @@ if [ "$IS_HIGH_PING" -eq 1 ] || [ "$LOSS" -gt 0 ]; then
     echo "$MSG" >> "$INCIDENT_LOG"
     
     # Esegue MTR se presente (rimuovi il # sotto se hai mtr installato)
-    mtr -r -c 10 -w "$PING_TARGET" >> "$INCIDENT_LOG" 2>&1
+    # mtr -r -c 10 -w "$PING_TARGET" >> "$INCIDENT_LOG" 2>&1
     echo "------------------------------------------------" >> "$INCIDENT_LOG"
 fi
 
@@ -129,7 +129,7 @@ if [ "$IS_HIGH_PING_V6" -eq 1 ] || [ "$LOSS_V6" -gt 0 ]; then
     echo "$MSG" >> "$INCIDENT_LOG"
     
     # Esegue MTR v6 se presente (rimuovi il # sotto se hai mtr installato)
-    mtr -6 -r -c 10 -w "$PING_TARGET_V6" >> "$INCIDENT_LOG" 2>&1
+    # mtr -6 -r -c 10 -w "$PING_TARGET_V6" >> "$INCIDENT_LOG" 2>&1
     echo "------------------------------------------------" >> "$INCIDENT_LOG"
 fi
 
@@ -325,14 +325,32 @@ cat <<HTML > "$WEB_DIR/$HTML_FILENAME"
         function createLineChart(id, label, dataKey, color, bg) {
             new Chart(document.getElementById(id), {
                 type: 'line',
-                data: { datasets: [{ label: label, data: dataV4.map(d=>({x:d.x, y:d[dataKey]})), borderColor: color, backgroundColor: bg, borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 4 }]},
+                data: { datasets: [{ 
+                    label: label, 
+                    data: dataV4.map(d=>({x:d.x, y:d[dataKey]})), 
+                    borderColor: color, 
+                    backgroundColor: bg, 
+                    borderWidth: 2, 
+                    fill: true, 
+                    pointRadius: 2,           // MODIFICATO: Da 0 a 2 per vedere i pallini
+                    pointHoverRadius: 5       // MODIFICATO: Aumentato per l'hover
+                }]},
                 options: { ...commonOptions, scales: { x: timeScale, y: { beginAtZero: true } } }
             });
         }
         function createLineChartV6(id, label, dataKey, color, bg) {
             new Chart(document.getElementById(id), {
                 type: 'line',
-                data: { datasets: [{ label: label, data: dataV6.map(d=>({x:d.x, y:d[dataKey]})), borderColor: color, backgroundColor: bg, borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 4 }]},
+                data: { datasets: [{ 
+                    label: label, 
+                    data: dataV6.map(d=>({x:d.x, y:d[dataKey]})), 
+                    borderColor: color, 
+                    backgroundColor: bg, 
+                    borderWidth: 2, 
+                    fill: true, 
+                    pointRadius: 2,           // MODIFICATO: Da 0 a 2 per vedere i pallini
+                    pointHoverRadius: 5       // MODIFICATO: Aumentato per l'hover
+                }]},
                 options: { ...commonOptions, scales: { x: timeScale, y: { beginAtZero: true } } }
             });
         }
