@@ -16,7 +16,7 @@ TRIGGER_LATENCY=30
 WEB_DIR="/opt/var/www/ping"
 HTML_FILENAME="index.html"
 
-# 4. CHART HISTORY (Points to calculate average from)
+# 4. CHART HISTORY
 MAX_DISPLAY_POINTS=2000
 
 # 5. DATABASE AND RETENTION
@@ -100,9 +100,9 @@ awk -F'|' '{printf "{x:%s000,p:%s,j:%s,l:%s},", $1, $2, $3, $4}' | sed 's/,$//')
 
 DATE_UPDATE=$(date "+%d/%m/%Y %H:%M:%S")
 
-cat <<EOF > "$WEB_DIR/$HTML_FILENAME"
+cat <<HTML > "$WEB_DIR/$HTML_FILENAME"
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -161,62 +161,62 @@ cat <<EOF > "$WEB_DIR/$HTML_FILENAME"
         <h1>🌐 Keenetic Ping Monitor: $PING_TARGET</h1>
         
         <div class="refresh-bar">
-            <span>Ultimo aggiornamento: <strong>$DATE_UPDATE</strong></span>
-            <a href="javascript:location.reload()" class="btn">Aggiorna Ora</a>
+            <span>Last Update: <strong>$DATE_UPDATE</strong></span>
+            <a href="javascript:location.reload()" class="btn">Refresh Now</a>
         </div>
 
         <div class="grid">
             <div class="card">
-                <h2>Latenza (Ping)</h2>
+                <h2>Latency (Ping)</h2>
                 <div class="value hl-blue">${AVG_PING}<span class="unit">ms</span></div>
-                <div class="sub-label">Ultimo Test</div>
+                <div class="sub-label">Last Test</div>
                 <div class="avg-row">
-                    <span>Media: <strong>${HIST_PING}</strong> ms</span>
+                    <span>Avg: <strong>${HIST_PING}</strong> ms</span>
                 </div>
             </div>
             <div class="card">
-                <h2>Stabilità (Jitter)</h2>
+                <h2>Stability (Jitter)</h2>
                 <div class="value hl-orange">${JITTER}<span class="unit">ms</span></div>
-                <div class="sub-label">Ultimo Test</div>
+                <div class="sub-label">Last Test</div>
                 <div class="avg-row">
-                    <span>Media: <strong>${HIST_JIT}</strong> ms</span>
+                    <span>Avg: <strong>${HIST_JIT}</strong> ms</span>
                 </div>
             </div>
             <div class="card">
                 <h2>Packet Loss</h2>
                 <div class="value hl-red">${LOSS}<span class="unit">%</span></div>
-                <div class="sub-label">Ultimo Test</div>
+                <div class="sub-label">Last Test</div>
                 <div class="avg-row">
-                    <span>Media: <strong>${HIST_LOSS}</strong> %</span>
+                    <span>Avg: <strong>${HIST_LOSS}</strong> %</span>
                 </div>
             </div>
         </div>
 
         <div class="chart-card">
             <div class="chart-header">
-                <div class="chart-title" style="color:#007bff">Storico Latenza</div>
-                <label class="scale-toggle"><input type="checkbox" onchange="toggleScale(this, 'pingChart')"> Scala Logaritmica</label>
+                <div class="chart-title" style="color:#007bff">Latency History</div>
+                <label class="scale-toggle"><input type="checkbox" onchange="toggleScale(this, 'pingChart')"> Log Scale</label>
             </div>
             <div class="canvas-container"><canvas id="pingChart"></canvas></div>
         </div>
 
         <div class="chart-card">
             <div class="chart-header">
-                <div class="chart-title" style="color:#fd7e14">Storico Jitter</div>
-                <label class="scale-toggle"><input type="checkbox" onchange="toggleScale(this, 'jitterChart')"> Scala Logaritmica</label>
+                <div class="chart-title" style="color:#fd7e14">Jitter History</div>
+                <label class="scale-toggle"><input type="checkbox" onchange="toggleScale(this, 'jitterChart')"> Log Scale</label>
             </div>
             <div class="canvas-container"><canvas id="jitterChart"></canvas></div>
         </div>
 
         <div class="chart-card">
             <div class="chart-header">
-                <div class="chart-title" style="color:#dc3545">Storico Perdita Pacchetti</div>
+                <div class="chart-title" style="color:#dc3545">Packet Loss History</div>
             </div>
             <div class="canvas-container"><canvas id="lossChart"></canvas></div>
         </div>
 
         <div class="footer">
-            Retention Dati: $RETENTION_DAYS giorni | Database: SQLite3
+            Data Retention: $RETENTION_DAYS days | Database: SQLite3
         </div>
     </div>
 
@@ -299,4 +299,4 @@ cat <<EOF > "$WEB_DIR/$HTML_FILENAME"
     </script>
 </body>
 </html>
-EOF
+HTML
