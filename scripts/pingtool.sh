@@ -116,7 +116,7 @@ if [ "$IS_HIGH_PING" -eq 1 ] || [ "$LOSS" -gt 0 ]; then
     echo "$MSG"
     echo "$MSG" >> "$INCIDENT_LOG"
     
-    # Esegue MTR se presente (rimuovi il # sotto se hai mtr installato)
+    # Runs MTR if present (uncomment below if you have mtr installed)
     # mtr -r -c 10 -w "$PING_TARGET" >> "$INCIDENT_LOG" 2>&1
     echo "------------------------------------------------" >> "$INCIDENT_LOG"
 fi
@@ -128,12 +128,12 @@ if [ "$IS_HIGH_PING_V6" -eq 1 ] || [ "$LOSS_V6" -gt 0 ]; then
     echo "$MSG"
     echo "$MSG" >> "$INCIDENT_LOG"
     
-    # Esegue MTR v6 se presente (rimuovi il # sotto se hai mtr installato)
+    # Runs MTR v6 if present (uncomment below if you have mtr installed)
     # mtr -6 -r -c 10 -w "$PING_TARGET_V6" >> "$INCIDENT_LOG" 2>&1
     echo "------------------------------------------------" >> "$INCIDENT_LOG"
 fi
 
-# Mantiene il log delle dimensioni ragionevoli (ultime 100 righe)
+# Keep log size reasonable (last 100 lines)
 if [ -f "$INCIDENT_LOG" ]; then
     tail -n 100 "$INCIDENT_LOG" > "$INCIDENT_LOG.tmp" && mv "$INCIDENT_LOG.tmp" "$INCIDENT_LOG"
 fi
@@ -332,8 +332,8 @@ cat <<HTML > "$WEB_DIR/$HTML_FILENAME"
                     backgroundColor: bg, 
                     borderWidth: 2, 
                     fill: true, 
-                    pointRadius: 2,           // MODIFICATO: Da 0 a 2 per vedere i pallini
-                    pointHoverRadius: 5       // MODIFICATO: Aumentato per l'hover
+                    pointRadius: 2,            // CHANGED: From 0 to 2 to make dots visible
+                    pointHoverRadius: 5        // CHANGED: Increased for hover
                 }]},
                 options: { ...commonOptions, scales: { x: timeScale, y: { beginAtZero: true } } }
             });
@@ -348,8 +348,8 @@ cat <<HTML > "$WEB_DIR/$HTML_FILENAME"
                     backgroundColor: bg, 
                     borderWidth: 2, 
                     fill: true, 
-                    pointRadius: 2,           // MODIFICATO: Da 0 a 2 per vedere i pallini
-                    pointHoverRadius: 5       // MODIFICATO: Aumentato per l'hover
+                    pointRadius: 2,            // CHANGED: From 0 to 2 to make dots visible
+                    pointHoverRadius: 5        // CHANGED: Increased for hover
                 }]},
                 options: { ...commonOptions, scales: { x: timeScale, y: { beginAtZero: true } } }
             });
