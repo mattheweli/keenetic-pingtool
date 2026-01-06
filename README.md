@@ -51,7 +51,7 @@ Add this line:
 ```
 
 ## Viewing the Dashboard
-The script generates pingtool.html in /opt/var/www. If you have the Entware Web Server (nginx/lighttpd) running, you can access it via browser: http://192.168.1.1:81/pingtool.html (Port depends on your setup).
+The script generates pingtool.html in /opt/var/www. If you have the Entware Web Server (nginx/lighttpd) running, you can access it via browser: http://192.168.1.1:81/ping/ (Port depends on your setup).
 
 Alternatively, expose the folder via SMB or FTP to open the file locally.
 
@@ -82,6 +82,6 @@ server.port = 81
 ```
 
 4. **Access the Dashboard:** Open your browser and navigate to:
-http://YOUR_ROUTER_IP:81/connmon.html
+http://YOUR_ROUTER_IP:81/ping/
 
 ![alt text](https://github.com/mattheweli/keenetic-pingtool/blob/main/Screenshot%202026-01-04%20155808.png)
