@@ -2,6 +2,12 @@
 export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 
 # ==============================================================================
+# KEENETIC PINGTOOL v1.4 (SMART TIME AXIS)
+# Features: Dual-Stack Ping, Auto Theme, Self-Healing, Date-Aware Charts
+# Change Log: v1.4 - Improved Chart X-Axis to show Days/Dates when appropriate
+# ==============================================================================
+
+# ==============================================================================
 # USER CONFIGURATION
 # ==============================================================================
 PING_TARGET="8.8.8.8"
@@ -15,6 +21,11 @@ DB_FILE="$DB_DIR/pingtool.db"
 LOCK_FILE="/tmp/pingtool.lock"
 RETENTION_DAYS=45
 MAX_DISPLAY_POINTS=2000
+
+# CDN URLs for Chart.js libraries (UMD/Bundle versions for browser compatibility)
+URL_CHARTJS="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"
+URL_ADAPTER="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"
+URL_ZOOM="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"
 
 # ==============================================================================
 # LOCK MANAGEMENT & INIT
@@ -36,6 +47,22 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] pingtool: Starting Dual-Stack test..."
 mkdir -p "$DB_DIR"
 mkdir -p "$WEB_DIR"
 
+# --- CHECK & DOWNLOAD DEPENDENCIES ---
+download_lib() {
+    URL=$1
+    FILE=$2
+    if [ ! -f "$WEB_DIR/$FILE" ]; then
+        echo " - Missing library $FILE. Downloading..."
+        wget --no-check-certificate -q -O "$WEB_DIR/$FILE" "$URL"
+        if [ $? -eq 0 ]; then echo "   [OK] Downloaded $FILE"; else echo "   [ERR] Failed to download $FILE"; fi
+    fi
+}
+
+download_lib "$URL_CHARTJS" "chart.js"
+download_lib "$URL_ADAPTER" "chartjs-adapter-date-fns.js"
+download_lib "$URL_ZOOM" "chartjs-plugin-zoom.js"
+
+# --- DB INIT ---
 if [ ! -f "$DB_FILE" ]; then
     echo " - First run: Initializing SQLite Database..."
     sqlite3 "$DB_FILE" "CREATE TABLE IF NOT EXISTS stats (id INTEGER PRIMARY KEY, timestamp INTEGER, ping REAL, jitter REAL, loss REAL);"
@@ -164,7 +191,7 @@ EOF
 echo "Done."
 
 # ==============================================================================
-# GENERATE STATIC HTML (FIXED: No Fill, Dots, Log Scale Fix)
+# GENERATE STATIC HTML (AUTO THEME + SMART DATE AXIS)
 # ==============================================================================
 HTML_FILE="$WEB_DIR/index.html"
 if [ ! -f "$HTML_FILE" ]; then
@@ -183,26 +210,66 @@ cat <<'HTML_EOF' > "$HTML_FILE"
     <script src="chartjs-plugin-zoom.js"></script>
 
     <style>
-        :root { --bg: #f4f7f6; --card: #fff; --text: #333; --blue: #007bff; --orange: #fd7e14; --red: #dc3545; --teal: #20c997; --purple: #6f42c1; --darkred: #b02a37; }
-        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
+        /* CSS VARIABLES for Theming */
+        :root { 
+            --bg: #f4f7f6; 
+            --card: #ffffff; 
+            --text: #333333; 
+            --muted: #666666;
+            --border: #e9ecef;
+            --shadow: rgba(0,0,0,0.03);
+            
+            /* Chart Colors (Universal) */
+            --blue: #007bff; --orange: #fd7e14; --red: #dc3545; 
+            --teal: #20c997; --purple: #6f42c1; --darkred: #b02a37; 
+        }
+        
+        /* DARK MODE OVERRIDES */
+        @media (prefers-color-scheme: dark) {
+            :root { 
+                --bg: #121212; 
+                --card: #1e1e1e; 
+                --text: #e0e0e0; 
+                --muted: #a0a0a0;
+                --border: #2c2c2c;
+                --shadow: rgba(0,0,0,0.5);
+            }
+        }
+
+        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; transition: background 0.3s, color 0.3s; }
         .container { max-width: 1000px; margin: 0 auto; }
-        h1 { text-align: center; color: #1a1a1a; margin-bottom: 20px; }
+        h1 { text-align: center; color: var(--text); margin-bottom: 20px; }
         
-        .head-bar { display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .head-bar { 
+            display: flex; justify-content: space-between; align-items: center; 
+            background: var(--card); padding: 15px; border-radius: 8px; 
+            margin-bottom: 20px; box-shadow: 0 2px 5px var(--shadow); border: 1px solid var(--border);
+        }
+        
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px; margin-bottom: 25px; }
-        .card { background: var(--card); padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-        .card h2 { margin: 0 0 5px; font-size: 12px; text-transform: uppercase; color: #888; }
-        .val { font-size: 26px; font-weight: 700; }
         
-        .chart-box { background: var(--card); padding: 15px; border-radius: 8px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .card { 
+            background: var(--card); padding: 15px; border-radius: 8px; text-align: center; 
+            box-shadow: 0 2px 5px var(--shadow); border: 1px solid var(--border);
+        }
+        .card h2 { margin: 0 0 5px; font-size: 12px; text-transform: uppercase; color: var(--muted); }
+        .val { font-size: 26px; font-weight: 700; }
+        small { color: var(--muted); }
+        
+        .chart-box { 
+            background: var(--card); padding: 15px; border-radius: 8px; 
+            margin-bottom: 25px; box-shadow: 0 2px 5px var(--shadow); border: 1px solid var(--border);
+        }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
         .chart-title { font-weight: bold; font-size: 16px; }
-        .chart-controls { display: flex; align-items: center; gap: 15px; font-size: 12px; color: #666; }
+        .chart-controls { display: flex; align-items: center; gap: 15px; font-size: 12px; color: var(--muted); }
         
         canvas { touch-action: pan-y !important; height: 220px; width: 100%; }
-        .zoom-hint { font-weight: normal; font-size: 12px; color: #999; margin-left: 5px; }
-        .badge { background: #eee; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; margin-left: 5px; }
-        button { background: var(--blue); color: #fff; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; }
+        .zoom-hint { font-weight: normal; font-size: 12px; color: var(--muted); margin-left: 5px; }
+        .badge { background: var(--border); padding: 2px 6px; border-radius: 4px; font-size: 0.8em; margin-left: 5px; color: var(--text); }
+        
+        button { background: var(--blue); color: #fff; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; transition: opacity 0.2s; }
+        button:hover { opacity: 0.9; }
     </style>
 </head>
 <body>
@@ -270,7 +337,7 @@ cat <<'HTML_EOF' > "$HTML_FILE"
     <script src="data.js"></script>
 
     <script>
-        // Common Options (Dots Enabled, No Fill)
+        // Common Options (Dots Enabled, No Fill, Smart Time Axis)
         const commonOptions = {
             responsive: true, maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
@@ -281,9 +348,32 @@ cat <<'HTML_EOF' > "$HTML_FILE"
                         drag: { enabled: true, backgroundColor: 'rgba(54, 162, 235, 0.2)' },
                         mode: 'x'
                     }
+                },
+                tooltip: {
+                    callbacks: {
+                        title: function(context) {
+                            // Full date in tooltip
+                            const d = new Date(context[0].parsed.x);
+                            return d.toLocaleString([], { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                        }
+                    }
                 }
             },
-            scales: { x: { type: 'time', time: { displayFormats: { minute: 'HH:mm' } } }, y: { beginAtZero: true } },
+            scales: { 
+                x: { 
+                    type: 'time', 
+                    time: { 
+                        tooltipFormat: 'dd/MM/yyyy HH:mm',
+                        displayFormats: { 
+                            minute: 'HH:mm', 
+                            hour: 'dd/MM HH:mm', 
+                            day: 'dd/MM' 
+                        } 
+                    },
+                    ticks: { maxRotation: 0, autoSkip: true }
+                }, 
+                y: { beginAtZero: true } 
+            },
             elements: {
                 point: { radius: 2, hoverRadius: 5 } // Explicit dots
             }
@@ -293,7 +383,6 @@ cat <<'HTML_EOF' > "$HTML_FILE"
         function toggleLog(cb, id) { 
             const c = Chart.getChart(id); 
             if(c) { 
-                // We recreate the scale object to ensure cleaner transition (avoids double click issue)
                 if (cb.checked) {
                     c.options.scales.y = { type: 'logarithmic', min: 0.1, beginAtZero: false };
                 } else {
