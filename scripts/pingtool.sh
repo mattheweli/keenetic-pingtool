@@ -2,9 +2,11 @@
 export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 
 # ==============================================================================
-# KEENETIC PINGTOOL v1.4 (SMART TIME AXIS)
-# Features: Dual-Stack Ping, Auto Theme, Self-Healing, Date-Aware Charts
-# Change Log: v1.4 - Improved Chart X-Axis to show Days/Dates when appropriate
+# KEENETIC PINGTOOL v1.5.0 (UNIFIED UI + SAMPLE COUNTER)
+# Features: 
+# - UI MATCH: Header layout matches Traffic Manager & Firewall Stats.
+# - NEW: Displays sample count (points) for IPv4 and IPv6 sections.
+# - Core: Dual-Stack Ping, Auto Theme, Self-Healing.
 # ==============================================================================
 
 # ==============================================================================
@@ -22,7 +24,7 @@ LOCK_FILE="/tmp/pingtool.lock"
 RETENTION_DAYS=45
 MAX_DISPLAY_POINTS=2000
 
-# CDN URLs for Chart.js libraries (UMD/Bundle versions for browser compatibility)
+# CDN URLs for Chart.js libraries
 URL_CHARTJS="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"
 URL_ADAPTER="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"
 URL_ZOOM="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"
@@ -49,8 +51,7 @@ mkdir -p "$WEB_DIR"
 
 # --- CHECK & DOWNLOAD DEPENDENCIES ---
 download_lib() {
-    URL=$1
-    FILE=$2
+    URL=$1; FILE=$2
     if [ ! -f "$WEB_DIR/$FILE" ]; then
         echo " - Missing library $FILE. Downloading..."
         wget --no-check-certificate -q -O "$WEB_DIR/$FILE" "$URL"
@@ -191,7 +192,7 @@ EOF
 echo "Done."
 
 # ==============================================================================
-# GENERATE STATIC HTML (AUTO THEME + SMART DATE AXIS)
+# GENERATE STATIC HTML
 # ==============================================================================
 HTML_FILE="$WEB_DIR/index.html"
 if [ ! -f "$HTML_FILE" ]; then
@@ -203,63 +204,50 @@ cat <<'HTML_EOF' > "$HTML_FILE"
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Keenetic Dual-Stack Ping Monitor</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
     
     <script src="chart.js"></script>
     <script src="chartjs-adapter-date-fns.js"></script>
     <script src="chartjs-plugin-zoom.js"></script>
 
     <style>
-        /* CSS VARIABLES for Theming */
+        /* CSS VARIABLES */
         :root { 
-            --bg: #f4f7f6; 
-            --card: #ffffff; 
-            --text: #333333; 
-            --muted: #666666;
-            --border: #e9ecef;
-            --shadow: rgba(0,0,0,0.03);
-            
-            /* Chart Colors (Universal) */
+            --bg: #f4f7f6; --card: #ffffff; --text: #333333; --muted: #666666;
+            --border: #e9ecef; --shadow: rgba(0,0,0,0.03);
             --blue: #007bff; --orange: #fd7e14; --red: #dc3545; 
             --teal: #20c997; --purple: #6f42c1; --darkred: #b02a37; 
         }
-        
-        /* DARK MODE OVERRIDES */
         @media (prefers-color-scheme: dark) {
-            :root { 
-                --bg: #121212; 
-                --card: #1e1e1e; 
-                --text: #e0e0e0; 
-                --muted: #a0a0a0;
-                --border: #2c2c2c;
-                --shadow: rgba(0,0,0,0.5);
-            }
+            :root { --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --muted: #a0a0a0; --border: #2c2c2c; --shadow: rgba(0,0,0,0.5); }
         }
 
         body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; transition: background 0.3s, color 0.3s; }
-        .container { max-width: 1000px; margin: 0 auto; }
-        h1 { text-align: center; color: var(--text); margin-bottom: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
         
-        .head-bar { 
-            display: flex; justify-content: space-between; align-items: center; 
-            background: var(--card); padding: 15px; border-radius: 8px; 
-            margin-bottom: 20px; box-shadow: 0 2px 5px var(--shadow); border: 1px solid var(--border);
+        /* HEADER - UNIFIED STYLE */
+        .status-bar { 
+            display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; 
+            background: var(--card); padding: 15px 20px; border-radius: 8px; 
+            border: 1px solid var(--border); margin-bottom: 25px; gap: 15px;
         }
+        .header-title { margin: 0; font-weight: 700; display: flex; align-items: center; gap: 15px; font-size: 1.5rem; }
+        .btn-home { text-decoration: none; font-size: 22px; border-right: 1px solid var(--border); padding-right: 15px; transition: transform 0.2s; }
+        .btn-home:hover { transform: scale(1.1); }
         
+        .status-controls { display: flex; align-items: center; gap: 15px; }
+        
+        .btn-refresh { background-color: var(--blue); color: #fff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 600;}
+        .btn-refresh:hover { opacity: 0.9; }
+        
+        /* CONTENT */
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px; margin-bottom: 25px; }
-        
-        .card { 
-            background: var(--card); padding: 15px; border-radius: 8px; text-align: center; 
-            box-shadow: 0 2px 5px var(--shadow); border: 1px solid var(--border);
-        }
+        .card { background: var(--card); padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 5px var(--shadow); border: 1px solid var(--border); }
         .card h2 { margin: 0 0 5px; font-size: 12px; text-transform: uppercase; color: var(--muted); }
         .val { font-size: 26px; font-weight: 700; }
         small { color: var(--muted); }
         
-        .chart-box { 
-            background: var(--card); padding: 15px; border-radius: 8px; 
-            margin-bottom: 25px; box-shadow: 0 2px 5px var(--shadow); border: 1px solid var(--border);
-        }
+        .chart-box { background: var(--card); padding: 15px; border-radius: 8px; margin-bottom: 25px; box-shadow: 0 2px 5px var(--shadow); border: 1px solid var(--border); }
         .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
         .chart-title { font-weight: bold; font-size: 16px; }
         .chart-controls { display: flex; align-items: center; gap: 15px; font-size: 12px; color: var(--muted); }
@@ -268,20 +256,32 @@ cat <<'HTML_EOF' > "$HTML_FILE"
         .zoom-hint { font-weight: normal; font-size: 12px; color: var(--muted); margin-left: 5px; }
         .badge { background: var(--border); padding: 2px 6px; border-radius: 4px; font-size: 0.8em; margin-left: 5px; color: var(--text); }
         
-        button { background: var(--blue); color: #fff; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; transition: opacity 0.2s; }
-        button:hover { opacity: 0.9; }
+        /* Mobile Breakpoint for Header */
+        @media(max-width: 768px) {
+            .status-bar { flex-direction: column; text-align: center; } 
+            .header-title { font-size: 1.3rem; justify-content: center; }
+            .status-controls { width: 100%; justify-content: center; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🌐 Keenetic Dual-Stack Ping Monitor</h1>
-        
-        <div class="head-bar">
-            <div>Last Update: <span style="font-weight:bold" id="lastUpdate">Loading...</span></div>
-            <button onclick="location.reload()">Refresh Now</button>
+        <div class="status-bar">
+            <h2 class="header-title">
+                <a href="../index.html" class="btn-home" title="Back to Dashboard">🏠</a>
+                <span>⚡ Keenetic Ping Monitor</span>
+            </h2>
+            <div class="status-controls">
+                <div>Last Update: <span id="lastUpdate" style="font-weight:700">Loading...</span></div>
+                <a href="javascript:location.reload()" class="btn-refresh">Refresh</a>
+            </div>
         </div>
 
-        <h3 style="border-left: 4px solid var(--blue); padding-left: 10px;">IPv4 <span class="badge" id="targetV4"></span></h3>
+        <h3 style="border-left: 4px solid var(--blue); padding-left: 10px; display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
+            IPv4 <span class="badge" id="targetV4"></span> 
+            <span style="font-size:13px; font-weight:400; color:var(--muted); margin-left:10px" id="countV4"></span>
+        </h3>
+        
         <div class="grid">
             <div class="card"><h2>Latency</h2><div class="val" style="color:var(--blue)" id="v4_p">-</div><small>Avg: <span id="v4_avg_p">-</span></small></div>
             <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--orange)" id="v4_j">-</div><small>Avg: <span id="v4_avg_j">-</span></small></div>
@@ -307,7 +307,11 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             <div style="position:relative; height:220px"><canvas id="c_l4"></canvas></div>
         </div>
 
-        <h3 style="border-left: 4px solid var(--teal); padding-left: 10px; margin-top: 40px;">IPv6 <span class="badge" id="targetV6"></span></h3>
+        <h3 style="border-left: 4px solid var(--teal); padding-left: 10px; margin-top: 40px; display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
+            IPv6 <span class="badge" id="targetV6"></span>
+            <span style="font-size:13px; font-weight:400; color:var(--muted); margin-left:10px" id="countV6"></span>
+        </h3>
+        
         <div class="grid">
             <div class="card"><h2>Latency</h2><div class="val" style="color:var(--teal)" id="v6_p">-</div><small>Avg: <span id="v6_avg_p">-</span></small></div>
             <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--purple)" id="v6_j">-</div><small>Avg: <span id="v6_avg_j">-</span></small></div>
@@ -337,22 +341,15 @@ cat <<'HTML_EOF' > "$HTML_FILE"
     <script src="data.js"></script>
 
     <script>
-        // Common Options (Dots Enabled, No Fill, Smart Time Axis)
         const commonOptions = {
             responsive: true, maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             plugins: {
                 legend: { display: false },
-                zoom: {
-                    zoom: {
-                        drag: { enabled: true, backgroundColor: 'rgba(54, 162, 235, 0.2)' },
-                        mode: 'x'
-                    }
-                },
+                zoom: { zoom: { drag: { enabled: true, backgroundColor: 'rgba(54, 162, 235, 0.2)' }, mode: 'x' } },
                 tooltip: {
                     callbacks: {
                         title: function(context) {
-                            // Full date in tooltip
                             const d = new Date(context[0].parsed.x);
                             return d.toLocaleString([], { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
                         }
@@ -360,34 +357,16 @@ cat <<'HTML_EOF' > "$HTML_FILE"
                 }
             },
             scales: { 
-                x: { 
-                    type: 'time', 
-                    time: { 
-                        tooltipFormat: 'dd/MM/yyyy HH:mm',
-                        displayFormats: { 
-                            minute: 'HH:mm', 
-                            hour: 'dd/MM HH:mm', 
-                            day: 'dd/MM' 
-                        } 
-                    },
-                    ticks: { maxRotation: 0, autoSkip: true }
-                }, 
+                x: { type: 'time', time: { tooltipFormat: 'dd/MM/yyyy HH:mm', displayFormats: { minute: 'HH:mm', hour: 'dd/MM HH:mm', day: 'dd/MM' } }, ticks: { maxRotation: 0, autoSkip: true } }, 
                 y: { beginAtZero: true } 
             },
-            elements: {
-                point: { radius: 2, hoverRadius: 5 } // Explicit dots
-            }
+            elements: { point: { radius: 2, hoverRadius: 5 } }
         };
 
-        // FIXED LOG TOGGLE FUNCTION
         function toggleLog(cb, id) { 
             const c = Chart.getChart(id); 
             if(c) { 
-                if (cb.checked) {
-                    c.options.scales.y = { type: 'logarithmic', min: 0.1, beginAtZero: false };
-                } else {
-                    c.options.scales.y = { type: 'linear', beginAtZero: true };
-                }
+                c.options.scales.y = cb.checked ? { type: 'logarithmic', min: 0.1, beginAtZero: false } : { type: 'linear', beginAtZero: true };
                 c.update(); 
             } 
         }
@@ -399,6 +378,10 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             document.getElementById('lastUpdate').innerText = d.updated;
             document.getElementById('targetV4').innerText = d.targets.v4;
             document.getElementById('targetV6').innerText = d.targets.v6;
+            
+            // Populate Sample Counts
+            document.getElementById('countV4').innerText = "(" + d.history.v4.length + " samples)";
+            document.getElementById('countV6').innerText = "(" + d.history.v6.length + " samples)";
 
             // Update DOM V4
             document.getElementById('v4_p').innerText = d.current.v4.ping + "ms";
@@ -416,52 +399,32 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             document.getElementById('v6_avg_j').innerText = d.averages.v6.j;
             document.getElementById('v6_avg_l').innerText = d.averages.v6.l;
 
-            // Chart Helpers (fill: false)
-            const createChart = (id, label, dataKey, color, isBar=false) => {
+            const createChart = (id, dArr, color, isBar=false) => {
                 new Chart(document.getElementById(id), {
                     type: isBar ? 'bar' : 'line',
                     data: { datasets: [{ 
-                        label: label, 
-                        data: d.history.v4.map(i=>({x:i.x, y:i[dataKey]})), 
-                        borderColor: color, 
-                        backgroundColor: color, // Point color
-                        borderWidth: 1, 
-                        fill: false 
-                    }] },
-                    options: commonOptions
-                });
-            };
-            const createChartV6 = (id, label, dataKey, color, isBar=false) => {
-                new Chart(document.getElementById(id), {
-                    type: isBar ? 'bar' : 'line',
-                    data: { datasets: [{ 
-                        label: label, 
-                        data: d.history.v6.map(i=>({x:i.x, y:i[dataKey]})), 
-                        borderColor: color, 
-                        backgroundColor: color, // Point color
-                        borderWidth: 1, 
-                        fill: false 
+                        data: dArr, 
+                        borderColor: color, backgroundColor: color, 
+                        borderWidth: 1, fill: false 
                     }] },
                     options: commonOptions
                 });
             };
 
-            // Create 6 Separate Charts
-            createChart('c_p4', 'Ping', 'p', '#007bff');
-            createChart('c_j4', 'Jitter', 'j', '#fd7e14');
-            createChart('c_l4', 'Loss', 'l', '#dc3545', true);
+            createChart('c_p4', d.history.v4.map(i=>({x:i.x, y:i.p})), '#007bff');
+            createChart('c_j4', d.history.v4.map(i=>({x:i.x, y:i.j})), '#fd7e14');
+            createChart('c_l4', d.history.v4.map(i=>({x:i.x, y:i.l})), '#dc3545', true);
 
-            createChartV6('c_p6', 'Ping', 'p', '#20c997');
-            createChartV6('c_j6', 'Jitter', 'j', '#6f42c1');
-            createChartV6('c_l6', 'Loss', 'l', '#b02a37', true);
+            createChart('c_p6', d.history.v6.map(i=>({x:i.x, y:i.p})), '#20c997');
+            createChart('c_j6', d.history.v6.map(i=>({x:i.x, y:i.j})), '#6f42c1');
+            createChart('c_l6', d.history.v6.map(i=>({x:i.x, y:i.l})), '#b02a37', true);
 
-            // Double Click Reset
             document.querySelectorAll('canvas').forEach(c => { c.ondblclick = () => Chart.getChart(c).resetZoom(); });
         }
-
         render();
     </script>
 </body>
 </html>
 HTML_EOF
+chmod 644 "$HTML_FILE"
 fi
