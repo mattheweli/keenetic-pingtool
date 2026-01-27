@@ -2,16 +2,17 @@
 export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 
 # ==============================================================================
-# KEENETIC PINGTOOL v1.5.0 (UNIFIED UI + SAMPLE COUNTER)
+# KEENETIC PINGTOOL v1.6.0 (IPV6 TOGGLE)
 # Features: 
-# - UI MATCH: Header layout matches Traffic Manager & Firewall Stats.
-# - NEW: Displays sample count (points) for IPv4 and IPv6 sections.
-# - Core: Dual-Stack Ping, Auto Theme, Self-Healing.
+# - CONFIG: Added ENABLE_IPV6 flag to completely disable v6 testing.
+# - UI: HTML automatically hides IPv6 sections if disabled in config.
+# - CORE: Optimized DB writes (skips v6 tables if disabled).
 # ==============================================================================
 
 # ==============================================================================
 # USER CONFIGURATION
 # ==============================================================================
+ENABLE_IPV6="true"  # Set to "false" to disable IPv6 testing and UI
 PING_TARGET="8.8.8.8"
 PING_TARGET_V6="2001:4860:4860::8888"
 PING_DURATION=30
@@ -44,7 +45,7 @@ fi
 touch "$LOCK_FILE"
 trap "rm -f $LOCK_FILE" EXIT
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] pingtool: Starting Dual-Stack test..."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] pingtool: Starting test (IPv6: $ENABLE_IPV6)..."
 
 mkdir -p "$DB_DIR"
 mkdir -p "$WEB_DIR"
@@ -95,34 +96,43 @@ echo "Ping=$AVG_PING ms | Jitter=$JITTER ms | Loss=$LOSS%"
 sqlite3 "$DB_FILE" "INSERT INTO stats (timestamp, ping, jitter, loss) VALUES ($NOW, $AVG_PING, $JITTER, $LOSS);"
 
 # ==============================================================================
-# IPv6 TEST
+# IPv6 TEST (Conditional)
 # ==============================================================================
-echo -n " - Testing IPv6 ($PING_TARGET_V6)... "
-TMP_PING_V6="/tmp/pingtool_v6.tmp"
-PING6_CMD="ping6"; command -v ping6 >/dev/null 2>&1 || PING6_CMD="ping -6"
-$PING6_CMD -w "$PING_DURATION" -i 1 "$PING_TARGET_V6" > "$TMP_PING_V6" 2>/dev/null
+LOSS_V6=0; AVG_PING_V6=0; JITTER_V6=0
 
-LOSS_V6=$(grep -oP '\d+(?=% packet loss)' "$TMP_PING_V6"); [ -z "$LOSS_V6" ] && LOSS_V6=100
-AVG_PING_V6=$(tail -n 1 "$TMP_PING_V6" | awk -F '/' '{print $5}' | sed 's/[^0-9.]//g'); [ -z "$AVG_PING_V6" ] && AVG_PING_V6=0
+if [ "$ENABLE_IPV6" = "true" ]; then
+    echo -n " - Testing IPv6 ($PING_TARGET_V6)... "
+    TMP_PING_V6="/tmp/pingtool_v6.tmp"
+    PING6_CMD="ping6"; command -v ping6 >/dev/null 2>&1 || PING6_CMD="ping -6"
+    $PING6_CMD -w "$PING_DURATION" -i 1 "$PING_TARGET_V6" > "$TMP_PING_V6" 2>/dev/null
 
-if [ "$LOSS_V6" -lt 100 ]; then
-    TIMES_V6=$(grep "time=" "$TMP_PING_V6" | sed 's/.*time=\([0-9.]*\) .*/\1/')
-    JITTER_V6=$(echo "$TIMES_V6" | awk 'BEGIN {prev=0;td=0;c=0;f=1} {cur=$1; if(f==0){d=cur-prev; if(d<0)d=-d; td+=d; c++} prev=cur; f=0} END {if(c>0)printf "%.2f",td/c; else print "0"}')
-else 
-    JITTER_V6=0
+    LOSS_V6=$(grep -oP '\d+(?=% packet loss)' "$TMP_PING_V6"); [ -z "$LOSS_V6" ] && LOSS_V6=100
+    AVG_PING_V6=$(tail -n 1 "$TMP_PING_V6" | awk -F '/' '{print $5}' | sed 's/[^0-9.]//g'); [ -z "$AVG_PING_V6" ] && AVG_PING_V6=0
+
+    if [ "$LOSS_V6" -lt 100 ]; then
+        TIMES_V6=$(grep "time=" "$TMP_PING_V6" | sed 's/.*time=\([0-9.]*\) .*/\1/')
+        JITTER_V6=$(echo "$TIMES_V6" | awk 'BEGIN {prev=0;td=0;c=0;f=1} {cur=$1; if(f==0){d=cur-prev; if(d<0)d=-d; td+=d; c++} prev=cur; f=0} END {if(c>0)printf "%.2f",td/c; else print "0"}')
+    else 
+        JITTER_V6=0
+    fi
+
+    echo "Ping=$AVG_PING_V6 ms | Jitter=$JITTER_V6 ms | Loss=$LOSS_V6%"
+    sqlite3 "$DB_FILE" "INSERT INTO stats_v6 (timestamp, ping, jitter, loss) VALUES ($NOW, $AVG_PING_V6, $JITTER_V6, $LOSS_V6);"
+    rm -f "$TMP_PING_V6"
+else
+    echo " - IPv6 Testing Disabled."
 fi
 
-echo "Ping=$AVG_PING_V6 ms | Jitter=$JITTER_V6 ms | Loss=$LOSS_V6%"
-sqlite3 "$DB_FILE" "INSERT INTO stats_v6 (timestamp, ping, jitter, loss) VALUES ($NOW, $AVG_PING_V6, $JITTER_V6, $LOSS_V6);"
-
-rm -f "$TMP_PING" "$TMP_PING_V6"
+rm -f "$TMP_PING"
 
 # ==============================================================================
 # CLEANUP & ALERTS
 # ==============================================================================
 echo " - Cleaning old records (> $RETENTION_DAYS days)..."
 sqlite3 "$DB_FILE" "DELETE FROM stats WHERE timestamp < strftime('%s', 'now', '-$RETENTION_DAYS days');"
-sqlite3 "$DB_FILE" "DELETE FROM stats_v6 WHERE timestamp < strftime('%s', 'now', '-$RETENTION_DAYS days');"
+if [ "$ENABLE_IPV6" = "true" ]; then
+    sqlite3 "$DB_FILE" "DELETE FROM stats_v6 WHERE timestamp < strftime('%s', 'now', '-$RETENTION_DAYS days');"
+fi
 
 INCIDENT_LOG="$WEB_DIR/incidents.txt"
 
@@ -140,17 +150,19 @@ if [ "$LOSS" -gt 0 ] || [ "$IS_HIGH_V4" -eq 1 ]; then
     fi
 fi
 
-# Alert Logic IPv6
-IS_HIGH_V6=$(awk -v p="$AVG_PING_V6" -v t="$TRIGGER_LATENCY" 'BEGIN {print (p > t ? 1 : 0)}')
-if [ "$LOSS_V6" -gt 0 ] || [ "$IS_HIGH_V6" -eq 1 ]; then
-    echo " ! ALERT IPv6: Anomalous values detected. Running MTR..."
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ IPv6 Alert: Ping=$AVG_PING_V6 ms | Loss=$LOSS_V6%" >> "$INCIDENT_LOG"
-    if command -v mtr >/dev/null 2>&1; then
-        echo "--- MTR IPv6 Report ---" >> "$INCIDENT_LOG"
-        mtr -6 -r -c 10 -w "$PING_TARGET_V6" >> "$INCIDENT_LOG" 2>&1
-        echo "-----------------------" >> "$INCIDENT_LOG"
-    else
-        echo "Error: mtr not found" >> "$INCIDENT_LOG"
+# Alert Logic IPv6 (Conditional)
+if [ "$ENABLE_IPV6" = "true" ]; then
+    IS_HIGH_V6=$(awk -v p="$AVG_PING_V6" -v t="$TRIGGER_LATENCY" 'BEGIN {print (p > t ? 1 : 0)}')
+    if [ "$LOSS_V6" -gt 0 ] || [ "$IS_HIGH_V6" -eq 1 ]; then
+        echo " ! ALERT IPv6: Anomalous values detected. Running MTR..."
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ IPv6 Alert: Ping=$AVG_PING_V6 ms | Loss=$LOSS_V6%" >> "$INCIDENT_LOG"
+        if command -v mtr >/dev/null 2>&1; then
+            echo "--- MTR IPv6 Report ---" >> "$INCIDENT_LOG"
+            mtr -6 -r -c 10 -w "$PING_TARGET_V6" >> "$INCIDENT_LOG" 2>&1
+            echo "-----------------------" >> "$INCIDENT_LOG"
+        else
+            echo "Error: mtr not found" >> "$INCIDENT_LOG"
+    fi
     fi
 fi
 
@@ -166,14 +178,22 @@ DATA_JS="$WEB_DIR/data.js"
 DATE_UPDATE=$(date "+%d/%m/%Y %H:%M:%S")
 
 JSON_V4=$(sqlite3 "$DB_FILE" "SELECT timestamp, ping, jitter, loss FROM stats ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS;" | awk -F'|' '{printf "{x:%s000,p:%s,j:%s,l:%s},", $1, $2, $3, $4}' | sed 's/,$//')
-JSON_V6=$(sqlite3 "$DB_FILE" "SELECT timestamp, ping, jitter, loss FROM stats_v6 ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS;" | awk -F'|' '{printf "{x:%s000,p:%s,j:%s,l:%s},", $1, $2, $3, $4}' | sed 's/,$//')
-
 STATS_V4=$(sqlite3 "$DB_FILE" "SELECT AVG(ping), AVG(jitter), AVG(loss) FROM (SELECT ping, jitter, loss FROM stats ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS);")
-STATS_V6=$(sqlite3 "$DB_FILE" "SELECT AVG(ping), AVG(jitter), AVG(loss) FROM (SELECT ping, jitter, loss FROM stats_v6 ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS);")
+
+if [ "$ENABLE_IPV6" = "true" ]; then
+    JSON_V6=$(sqlite3 "$DB_FILE" "SELECT timestamp, ping, jitter, loss FROM stats_v6 ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS;" | awk -F'|' '{printf "{x:%s000,p:%s,j:%s,l:%s},", $1, $2, $3, $4}' | sed 's/,$//')
+    STATS_V6=$(sqlite3 "$DB_FILE" "SELECT AVG(ping), AVG(jitter), AVG(loss) FROM (SELECT ping, jitter, loss FROM stats_v6 ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS);")
+    JS_V6_CONFIG="true"
+else
+    JSON_V6=""
+    STATS_V6="0|0|0"
+    JS_V6_CONFIG="false"
+fi
 
 cat <<EOF > "$DATA_JS"
 window.PING_DATA = {
     updated: "$DATE_UPDATE",
+    config: { ipv6: $JS_V6_CONFIG },
     targets: { v4: "$PING_TARGET", v6: "$PING_TARGET_V6" },
     current: {
         v4: { ping: $AVG_PING, jitter: $JITTER, loss: $LOSS },
@@ -195,8 +215,9 @@ echo "Done."
 # GENERATE STATIC HTML
 # ==============================================================================
 HTML_FILE="$WEB_DIR/index.html"
-if [ ! -f "$HTML_FILE" ]; then
-    echo " - index.html missing. Generating new template..."
+# Force regeneration to apply UI changes
+if [ ! -f "$HTML_FILE" ] || [ "$1" = "force" ]; then
+    echo " - Generating new HTML template (Adaptive UI)..."
 cat <<'HTML_EOF' > "$HTML_FILE"
 <!DOCTYPE html>
 <html lang="en">
@@ -307,34 +328,36 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             <div style="position:relative; height:220px"><canvas id="c_l4"></canvas></div>
         </div>
 
-        <h3 style="border-left: 4px solid var(--teal); padding-left: 10px; margin-top: 40px; display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
-            IPv6 <span class="badge" id="targetV6"></span>
-            <span style="font-size:13px; font-weight:400; color:var(--muted); margin-left:10px" id="countV6"></span>
-        </h3>
-        
-        <div class="grid">
-            <div class="card"><h2>Latency</h2><div class="val" style="color:var(--teal)" id="v6_p">-</div><small>Avg: <span id="v6_avg_p">-</span></small></div>
-            <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--purple)" id="v6_j">-</div><small>Avg: <span id="v6_avg_j">-</span></small></div>
-            <div class="card"><h2>Loss</h2><div class="val" style="color:var(--darkred)" id="v6_l">-</div><small>Avg: <span id="v6_avg_l">-</span></small></div>
-        </div>
+        <div id="ipv6_section">
+            <h3 style="border-left: 4px solid var(--teal); padding-left: 10px; margin-top: 40px; display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
+                IPv6 <span class="badge" id="targetV6"></span>
+                <span style="font-size:13px; font-weight:400; color:var(--muted); margin-left:10px" id="countV6"></span>
+            </h3>
+            
+            <div class="grid">
+                <div class="card"><h2>Latency</h2><div class="val" style="color:var(--teal)" id="v6_p">-</div><small>Avg: <span id="v6_avg_p">-</span></small></div>
+                <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--purple)" id="v6_j">-</div><small>Avg: <span id="v6_avg_j">-</span></small></div>
+                <div class="card"><h2>Loss</h2><div class="val" style="color:var(--darkred)" id="v6_l">-</div><small>Avg: <span id="v6_avg_l">-</span></small></div>
+            </div>
 
-        <div class="chart-box">
-            <div class="chart-header">
-                <div class="chart-title" style="color:var(--teal)">Latency (ms) <span class="zoom-hint">(Select area to zoom)</span></div>
-                <div class="chart-controls"><label><input type="checkbox" autocomplete="off" onchange="toggleLog(this, 'c_p6')"> Log Scale</label></div>
+            <div class="chart-box">
+                <div class="chart-header">
+                    <div class="chart-title" style="color:var(--teal)">Latency (ms) <span class="zoom-hint">(Select area to zoom)</span></div>
+                    <div class="chart-controls"><label><input type="checkbox" autocomplete="off" onchange="toggleLog(this, 'c_p6')"> Log Scale</label></div>
+                </div>
+                <div style="position:relative; height:220px"><canvas id="c_p6"></canvas></div>
             </div>
-            <div style="position:relative; height:220px"><canvas id="c_p6"></canvas></div>
-        </div>
-        <div class="chart-box">
-            <div class="chart-header">
-                <div class="chart-title" style="color:var(--purple)">Jitter (ms)</div>
-                <div class="chart-controls"><label><input type="checkbox" autocomplete="off" onchange="toggleLog(this, 'c_j6')"> Log Scale</label></div>
+            <div class="chart-box">
+                <div class="chart-header">
+                    <div class="chart-title" style="color:var(--purple)">Jitter (ms)</div>
+                    <div class="chart-controls"><label><input type="checkbox" autocomplete="off" onchange="toggleLog(this, 'c_j6')"> Log Scale</label></div>
+                </div>
+                <div style="position:relative; height:220px"><canvas id="c_j6"></canvas></div>
             </div>
-            <div style="position:relative; height:220px"><canvas id="c_j6"></canvas></div>
-        </div>
-        <div class="chart-box">
-            <div class="chart-header"><div class="chart-title" style="color:var(--darkred)">Packet Loss (%)</div></div>
-            <div style="position:relative; height:220px"><canvas id="c_l6"></canvas></div>
+            <div class="chart-box">
+                <div class="chart-header"><div class="chart-title" style="color:var(--darkred)">Packet Loss (%)</div></div>
+                <div style="position:relative; height:220px"><canvas id="c_l6"></canvas></div>
+            </div>
         </div>
     </div>
 
@@ -375,13 +398,16 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             if(typeof window.PING_DATA === 'undefined') return;
             const d = window.PING_DATA;
 
+            // HIDE IPv6 IF DISABLED IN CONFIG
+            if (!d.config.ipv6) {
+                document.getElementById('ipv6_section').style.display = 'none';
+            }
+
             document.getElementById('lastUpdate').innerText = d.updated;
             document.getElementById('targetV4').innerText = d.targets.v4;
-            document.getElementById('targetV6').innerText = d.targets.v6;
             
             // Populate Sample Counts
             document.getElementById('countV4').innerText = "(" + d.history.v4.length + " samples)";
-            document.getElementById('countV6').innerText = "(" + d.history.v6.length + " samples)";
 
             // Update DOM V4
             document.getElementById('v4_p').innerText = d.current.v4.ping + "ms";
@@ -391,15 +417,8 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             document.getElementById('v4_avg_j').innerText = d.averages.v4.j;
             document.getElementById('v4_avg_l').innerText = d.averages.v4.l;
 
-            // Update DOM V6
-            document.getElementById('v6_p').innerText = d.current.v6.ping + "ms";
-            document.getElementById('v6_j').innerText = d.current.v6.jitter + "ms";
-            document.getElementById('v6_l').innerText = d.current.v6.loss + "%";
-            document.getElementById('v6_avg_p').innerText = d.averages.v6.p;
-            document.getElementById('v6_avg_j').innerText = d.averages.v6.j;
-            document.getElementById('v6_avg_l').innerText = d.averages.v6.l;
-
             const createChart = (id, dArr, color, isBar=false) => {
+                if(!document.getElementById(id)) return; // Skip if element hidden/missing
                 new Chart(document.getElementById(id), {
                     type: isBar ? 'bar' : 'line',
                     data: { datasets: [{ 
@@ -415,9 +434,22 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             createChart('c_j4', d.history.v4.map(i=>({x:i.x, y:i.j})), '#fd7e14');
             createChart('c_l4', d.history.v4.map(i=>({x:i.x, y:i.l})), '#dc3545', true);
 
-            createChart('c_p6', d.history.v6.map(i=>({x:i.x, y:i.p})), '#20c997');
-            createChart('c_j6', d.history.v6.map(i=>({x:i.x, y:i.j})), '#6f42c1');
-            createChart('c_l6', d.history.v6.map(i=>({x:i.x, y:i.l})), '#b02a37', true);
+            // ONLY RENDER IPv6 IF ENABLED
+            if (d.config.ipv6) {
+                document.getElementById('targetV6').innerText = d.targets.v6;
+                document.getElementById('countV6').innerText = "(" + d.history.v6.length + " samples)";
+                
+                document.getElementById('v6_p').innerText = d.current.v6.ping + "ms";
+                document.getElementById('v6_j').innerText = d.current.v6.jitter + "ms";
+                document.getElementById('v6_l').innerText = d.current.v6.loss + "%";
+                document.getElementById('v6_avg_p').innerText = d.averages.v6.p;
+                document.getElementById('v6_avg_j').innerText = d.averages.v6.j;
+                document.getElementById('v6_avg_l').innerText = d.averages.v6.l;
+
+                createChart('c_p6', d.history.v6.map(i=>({x:i.x, y:i.p})), '#20c997');
+                createChart('c_j6', d.history.v6.map(i=>({x:i.x, y:i.j})), '#6f42c1');
+                createChart('c_l6', d.history.v6.map(i=>({x:i.x, y:i.l})), '#b02a37', true);
+            }
 
             document.querySelectorAll('canvas').forEach(c => { c.ondblclick = () => Chart.getChart(c).resetZoom(); });
         }
