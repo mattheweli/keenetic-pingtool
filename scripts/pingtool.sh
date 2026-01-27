@@ -2,17 +2,17 @@
 export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 
 # ==============================================================================
-# KEENETIC PINGTOOL v1.6.0 (IPV6 TOGGLE)
+# KEENETIC PINGTOOL v1.6.1 (CLI FLAGS)
 # Features: 
-# - CONFIG: Added ENABLE_IPV6 flag to completely disable v6 testing.
-# - UI: HTML automatically hides IPv6 sections if disabled in config.
-# - CORE: Optimized DB writes (skips v6 tables if disabled).
+# - CLI: Added '-ipv4' flag to force IPv4-only mode at runtime.
+# - CLI: Arguments handling allows mixing flags (e.g., "-ipv4 force").
+# - CORE: Optimized DB writes & UI hiding logic.
 # ==============================================================================
 
 # ==============================================================================
 # USER CONFIGURATION
 # ==============================================================================
-ENABLE_IPV6="true"  # Set to "false" to disable IPv6 testing and UI
+ENABLE_IPV6="true"  # Default behavior (can be overridden by -ipv4 flag)
 PING_TARGET="8.8.8.8"
 PING_TARGET_V6="2001:4860:4860::8888"
 PING_DURATION=30
@@ -29,6 +29,22 @@ MAX_DISPLAY_POINTS=2000
 URL_CHARTJS="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"
 URL_ADAPTER="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"
 URL_ZOOM="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"
+
+# ==============================================================================
+# ARGUMENT PARSING
+# ==============================================================================
+FORCE_HTML_GEN="false"
+
+for arg in "$@"; do
+    case $arg in
+        -ipv4|--ipv4-only)
+            ENABLE_IPV6="false"
+            ;;
+        force|--force)
+            FORCE_HTML_GEN="true"
+            ;;
+    esac
+done
 
 # ==============================================================================
 # LOCK MANAGEMENT & INIT
@@ -120,7 +136,7 @@ if [ "$ENABLE_IPV6" = "true" ]; then
     sqlite3 "$DB_FILE" "INSERT INTO stats_v6 (timestamp, ping, jitter, loss) VALUES ($NOW, $AVG_PING_V6, $JITTER_V6, $LOSS_V6);"
     rm -f "$TMP_PING_V6"
 else
-    echo " - IPv6 Testing Disabled."
+    echo " - IPv6 Testing Disabled (by config or flag)."
 fi
 
 rm -f "$TMP_PING"
@@ -215,8 +231,8 @@ echo "Done."
 # GENERATE STATIC HTML
 # ==============================================================================
 HTML_FILE="$WEB_DIR/index.html"
-# Force regeneration to apply UI changes
-if [ ! -f "$HTML_FILE" ] || [ "$1" = "force" ]; then
+# Force regeneration to apply UI changes if requested
+if [ ! -f "$HTML_FILE" ] || [ "$FORCE_HTML_GEN" = "true" ]; then
     echo " - Generating new HTML template (Adaptive UI)..."
 cat <<'HTML_EOF' > "$HTML_FILE"
 <!DOCTYPE html>
