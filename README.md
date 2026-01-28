@@ -1,3 +1,14 @@
+<div align="center">
+
+### ❤️ Support the Project
+If you found this project helpful, consider buying me a coffee!
+
+<a href="https://revolut.me/matthew_eli">
+  <img src="https://img.shields.io/badge/Revolut-black?style=for-the-badge&logo=revolut&logoColor=white" alt="Donate with Revolut" />
+</a>
+
+</div>
+
 # Keenetic PingTool
 
 It logs Ping, Jitter, and Packet Loss to a SQLite database, visualizes the data via a responsive HTML5 dashboard using Chart.js, and automatically runs MTR diagnostics when latency spikes.
