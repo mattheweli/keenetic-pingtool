@@ -17,6 +17,8 @@ If you found this project helpful, consider buying me a coffee!
 
 It logs Ping, Jitter, and Packet Loss to a SQLite database, visualizes the data via a responsive HTML5 dashboard using Chart.js, and automatically runs MTR diagnostics when latency spikes.
 
+![alt text](https://github.com/mattheweli/keenetic-pingtool/raw/main/image.png.77b9f0fb50a587debc5a37fd6e24d80f.png)
+
 ## Features
 
 - 📊 **Dashboard:** Generates a standalone `pingtool.html` file with interactive graphs (Ping, Jitter, Loss).
