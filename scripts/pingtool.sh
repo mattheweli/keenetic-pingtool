@@ -2,8 +2,9 @@
 export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 
 # ==============================================================================
-# KEENETIC PINGTOOL v1.6.1 (CLI FLAGS)
-# Features: 
+# KEENETIC PINGTOOL v1.7.0 (EMAIL ALERT INTEGRATION)
+# Features:
+# - NEW: Added email notification when MTR is triggered 
 # - CLI: Added '-ipv4' flag to force IPv4-only mode at runtime.
 # - CLI: Arguments handling allows mixing flags (e.g., "-ipv4 force").
 # - CORE: Optimized DB writes & UI hiding logic.
@@ -13,6 +14,7 @@ export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 # USER CONFIGURATION
 # ==============================================================================
 ENABLE_IPV6="true"  # Default behavior (can be overridden by -ipv4 flag)
+EMAIL_ALERTS="true"
 PING_TARGET="8.8.8.8"
 PING_TARGET_V6="2001:4860:4860::8888"
 PING_DURATION=30
@@ -151,39 +153,64 @@ if [ "$ENABLE_IPV6" = "true" ]; then
 fi
 
 INCIDENT_LOG="$WEB_DIR/incidents.txt"
+EMAIL_MOD="/opt/bin/email_sender.mod"
 
-# Alert Logic IPv4
+# --- Alert Logic IPv4 ---
 IS_HIGH_V4=$(awk -v p="$AVG_PING" -v t="$TRIGGER_LATENCY" 'BEGIN {print (p > t ? 1 : 0)}')
+
 if [ "$LOSS" -gt 0 ] || [ "$IS_HIGH_V4" -eq 1 ]; then
-    echo " ! ALERT IPv4: Anomalous values detected. Running MTR..."
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ IPv4 Alert: Ping=$AVG_PING ms | Loss=$LOSS%" >> "$INCIDENT_LOG"
+    echo " ! ALERT IPv4: Anomalous values detected."
+    LOG_MSG="[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ IPv4 Alert: Ping=$AVG_PING ms | Loss=$LOSS%"
+    echo "$LOG_MSG" >> "$INCIDENT_LOG"
+    
+    MTR_REPORT=""
     if command -v mtr >/dev/null 2>&1; then
+        echo "   -> Running MTR trace..."
+        MTR_REPORT=$(mtr -4 -r -c 10 -w "$PING_TARGET")
+        
         echo "--- MTR IPv4 Report ---" >> "$INCIDENT_LOG"
-        mtr -4 -r -c 10 -w "$PING_TARGET" >> "$INCIDENT_LOG" 2>&1
+        echo "$MTR_REPORT" >> "$INCIDENT_LOG"
         echo "-----------------------" >> "$INCIDENT_LOG"
     else
+        MTR_REPORT="(MTR not installed)"
         echo "Error: mtr not found" >> "$INCIDENT_LOG"
     fi
+
+    # SEND EMAIL (If module exists)
+    if [ "$EMAIL_ALERTS" = "true" ] && [ -x "$EMAIL_MOD" ]; then
+        EMAIL_BODY="⚠️ Connection Instability Detected (IPv4)\n\nTarget: $PING_TARGET\nLatency: $AVG_PING ms (Threshold: $TRIGGER_LATENCY ms)\nPacket Loss: $LOSS%\n\n--- Diagnostic Report (MTR) ---\n$MTR_REPORT"
+        "$EMAIL_MOD" "Ping Alert (IPv4)" "$EMAIL_BODY" &
+    fi
 fi
 
-# Alert Logic IPv6 (Conditional)
+# --- Alert Logic IPv6 (Conditional) ---
 if [ "$ENABLE_IPV6" = "true" ]; then
     IS_HIGH_V6=$(awk -v p="$AVG_PING_V6" -v t="$TRIGGER_LATENCY" 'BEGIN {print (p > t ? 1 : 0)}')
+    
     if [ "$LOSS_V6" -gt 0 ] || [ "$IS_HIGH_V6" -eq 1 ]; then
-        echo " ! ALERT IPv6: Anomalous values detected. Running MTR..."
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ IPv6 Alert: Ping=$AVG_PING_V6 ms | Loss=$LOSS_V6%" >> "$INCIDENT_LOG"
+        echo " ! ALERT IPv6: Anomalous values detected."
+        LOG_MSG="[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ IPv6 Alert: Ping=$AVG_PING_V6 ms | Loss=$LOSS_V6%"
+        echo "$LOG_MSG" >> "$INCIDENT_LOG"
+        
+        MTR_REPORT_V6=""
         if command -v mtr >/dev/null 2>&1; then
+            echo "   -> Running MTR trace..."
+            MTR_REPORT_V6=$(mtr -6 -r -c 10 -w "$PING_TARGET_V6")
+            
             echo "--- MTR IPv6 Report ---" >> "$INCIDENT_LOG"
-            mtr -6 -r -c 10 -w "$PING_TARGET_V6" >> "$INCIDENT_LOG" 2>&1
+            echo "$MTR_REPORT_V6" >> "$INCIDENT_LOG"
             echo "-----------------------" >> "$INCIDENT_LOG"
         else
+            MTR_REPORT_V6="(MTR not installed)"
             echo "Error: mtr not found" >> "$INCIDENT_LOG"
-    fi
-    fi
-fi
+        fi
 
-if [ -f "$INCIDENT_LOG" ]; then
-    tail -n 200 "$INCIDENT_LOG" > "$INCIDENT_LOG.tmp" && mv "$INCIDENT_LOG.tmp" "$INCIDENT_LOG"
+        # SEND EMAIL
+        if [ "$EMAIL_ALERTS" = "true" ] && [ -x "$EMAIL_MOD" ]; then
+            EMAIL_BODY="⚠️ Connection Instability Detected (IPv6)\n\nTarget: $PING_TARGET_V6\nLatency: $AVG_PING_V6 ms\nPacket Loss: $LOSS_V6%\n\n--- Diagnostic Report (MTR) ---\n$MTR_REPORT_V6"
+            "$EMAIL_MOD" "Ping Alert (IPv6)" "$EMAIL_BODY" &
+        fi
+    fi
 fi
 
 # ==============================================================================
