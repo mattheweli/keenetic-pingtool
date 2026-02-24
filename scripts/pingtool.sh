@@ -2,8 +2,9 @@
 export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 
 # ==============================================================================
-# KEENETIC PINGTOOL v1.7.0 (EMAIL ALERT INTEGRATION)
+# KEENETIC PINGTOOL v1.7.1 (KEENETIC UI REFACTOR)
 # Features:
+# - UI: Fully redesigned HTML template to match native KeeneticOS dashboard.
 # - NEW: Added email notification when MTR is triggered 
 # - CLI: Added '-ipv4' flag to force IPv4-only mode at runtime.
 # - CLI: Arguments handling allows mixing flags (e.g., "-ipv4 force").
@@ -260,7 +261,7 @@ echo "Done."
 HTML_FILE="$WEB_DIR/index.html"
 # Force regeneration to apply UI changes if requested
 if [ ! -f "$HTML_FILE" ] || [ "$FORCE_HTML_GEN" = "true" ]; then
-    echo " - Generating new HTML template (Adaptive UI)..."
+    echo " - Generating new HTML template (Keenetic UI)..."
 cat <<'HTML_EOF' > "$HTML_FILE"
 <!DOCTYPE html>
 <html lang="en">
@@ -269,61 +270,143 @@ cat <<'HTML_EOF' > "$HTML_FILE"
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Keenetic Dual-Stack Ping Monitor</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     
     <script src="chart.js"></script>
     <script src="chartjs-adapter-date-fns.js"></script>
     <script src="chartjs-plugin-zoom.js"></script>
 
     <style>
-        /* CSS VARIABLES */
         :root { 
-            --bg: #f4f7f6; --card: #ffffff; --text: #333333; --muted: #666666;
-            --border: #e9ecef; --shadow: rgba(0,0,0,0.03);
-            --blue: #007bff; --orange: #fd7e14; --red: #dc3545; 
-            --teal: #20c997; --purple: #6f42c1; --darkred: #b02a37; 
+            /* === KEENETIC OFFICIAL LIGHT THEME === */
+            --dashboard-background: #EDEEF0;
+            --background: #fff;
+            --primary-text: #000;
+            --text-gray: #6e6e6e;
+            --primary-color: #0097dc;
+            --stroke: #bdb7b7;
+            --box-shadow-1: 0 5px 20px rgb(0 0 0 / 5%);
+            --dashboard-card-border: transparent;
+            
+            --blue: #0097dc; 
+            --orange: #fd7e14; 
+            --red: #de3d3d; 
+            --teal: #20c997; 
+            --purple: #6f42c1; 
+            --darkred: #b02a37; 
         }
-        @media (prefers-color-scheme: dark) {
-            :root { --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --muted: #a0a0a0; --border: #2c2c2c; --shadow: rgba(0,0,0,0.5); }
+        
+        @media (prefers-color-scheme: dark) { 
+            :root { 
+                /* === KEENETIC OFFICIAL DARK THEME === */
+                --dashboard-background: #1b2434;
+                --background: #243146; 
+                --primary-text: #c2c2c2;
+                --text-gray: #949b9f;
+                --stroke: #4d545f;
+                --box-shadow-1: 0 0 18px 0 #06080b;
+                --dashboard-card-border: #4d545f;
+
+                --blue: #77bce4;
+                --red: #ea4c4c;
+            } 
         }
 
-        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; transition: background 0.3s, color 0.3s; }
+        body { 
+            font-family: 'Roboto', -apple-system, sans-serif; 
+            font-size: 14px;
+            background: var(--dashboard-background); 
+            color: var(--primary-text); 
+            padding: 24px; 
+            margin: 0; 
+            -webkit-font-smoothing: antialiased;
+        }
         .container { max-width: 1200px; margin: 0 auto; }
         
-        /* HEADER - UNIFIED STYLE */
+        /* HEADER */
         .status-bar { 
-            display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; 
-            background: var(--card); padding: 15px 20px; border-radius: 8px; 
-            border: 1px solid var(--border); margin-bottom: 25px; gap: 15px;
+            display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 24px; gap: 15px;
         }
-        .header-title { margin: 0; font-weight: 700; display: flex; align-items: center; gap: 15px; font-size: 1.5rem; }
-        .btn-home { text-decoration: none; font-size: 22px; border-right: 1px solid var(--border); padding-right: 15px; transition: transform 0.2s; }
-        .btn-home:hover { transform: scale(1.1); }
+        .header-title { margin: 0; font-weight: 700; display: flex; align-items: center; gap: 12px; font-size: 20px; text-transform: uppercase; }
+        .btn-home { text-decoration: none; font-size: 20px; border-right: 1px solid var(--stroke); padding-right: 12px; transition: opacity 0.2s; color: var(--primary-text); }
+        .btn-home:hover { opacity: 0.7; }
         
-        .status-controls { display: flex; align-items: center; gap: 15px; }
+        .status-controls { display: flex; align-items: center; gap: 16px; }
         
-        .btn-refresh { background-color: var(--blue); color: #fff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 600;}
-        .btn-refresh:hover { opacity: 0.9; }
+        /* Refresh Dropdown */
+        .refresh-wrapper { position: relative; display: inline-flex; }
+        .refresh-select { 
+            appearance: none; -webkit-appearance: none; 
+            background: var(--background); color: var(--text-gray); 
+            border: 1px solid var(--stroke); padding: 4px 28px 4px 12px; 
+            border-radius: 4px; font-size: 14px; font-family: inherit;
+            cursor: pointer; outline: none; transition: all 0.2s; 
+        }
+        .refresh-select:hover, .refresh-select:focus { border-color: var(--primary-color); color: var(--primary-text); }
+        .refresh-arrow {
+            position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+            pointer-events: none; font-size: 10px; color: var(--stroke);
+        }
+
+        .btn-refresh { 
+            background-color: transparent; color: var(--primary-color); border: 1px solid var(--stroke); 
+            padding: 4px 16px; border-radius: 4px; cursor: pointer; text-decoration: none; 
+            font-size: 13px; font-weight: 500; font-family: inherit; transition: all 0.2s;
+        }
+        .btn-refresh:hover { border-color: var(--primary-color); }
         
-        /* CONTENT */
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px; margin-bottom: 25px; }
-        .card { background: var(--card); padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 5px var(--shadow); border: 1px solid var(--border); }
-        .card h2 { margin: 0 0 5px; font-size: 12px; text-transform: uppercase; color: var(--muted); }
-        .val { font-size: 26px; font-weight: 700; }
-        small { color: var(--muted); }
+        /* SECTION TITLES */
+        .section-header {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+            font-size: 16px; font-weight: 500; text-transform: uppercase; color: var(--primary-text);
+            margin: 32px 0 16px 0; padding-left: 12px;
+        }
+        .section-header.v4 { border-left: 4px solid var(--blue); }
+        .section-header.v6 { border-left: 4px solid var(--teal); }
         
-        .chart-box { background: var(--card); padding: 15px; border-radius: 8px; margin-bottom: 25px; box-shadow: 0 2px 5px var(--shadow); border: 1px solid var(--border); }
-        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
-        .chart-title { font-weight: bold; font-size: 16px; }
-        .chart-controls { display: flex; align-items: center; gap: 15px; font-size: 12px; color: var(--muted); }
+        .badge { background: var(--background); border: 1px solid var(--stroke); padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 400; color: var(--text-gray); }
+        .samples { font-size: 12px; font-weight: 400; color: var(--text-gray); margin-left: 4px; }
+
+        /* CONTENT GRIDS */
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px; margin-bottom: 24px; }
         
+        .card { 
+            background: var(--background); padding: 20px 24px; border-radius: 8px; 
+            box-shadow: var(--box-shadow-1); border: 1px solid var(--dashboard-card-border); 
+            display: flex; flex-direction: column; gap: 4px;
+        }
+        .card h2 { margin: 0; font-size: 12px; text-transform: uppercase; color: var(--text-gray); font-weight: 500; }
+        .val { font-size: 28px; font-weight: 700; line-height: 1.2; }
+        .avg { font-size: 12px; color: var(--text-gray); font-weight: 400; margin-top: 4px;}
+        
+        .chart-box { 
+            background: var(--background); padding: 20px 24px; border-radius: 8px; margin-bottom: 24px; 
+            box-shadow: var(--box-shadow-1); border: 1px solid var(--dashboard-card-border); 
+        }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--stroke); padding-bottom: 12px; }
+        .chart-title { font-weight: 500; font-size: 14px; text-transform: uppercase; }
+        
+        /* Toggle Switch for Log Scale */
+        .log-toggle-wrapper { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-gray); cursor: pointer; }
+        .log-toggle-input { display: none; }
+        .log-toggle-track {
+            width: 32px; height: 16px; background-color: var(--stroke); border-radius: 10px;
+            position: relative; transition: background-color 0.2s;
+        }
+        .log-toggle-thumb {
+            width: 12px; height: 12px; background-color: #fff; border-radius: 50%;
+            position: absolute; top: 2px; left: 2px; transition: transform 0.2s;
+        }
+        .log-toggle-input:checked + .log-toggle-track { background-color: var(--primary-color); }
+        .log-toggle-input:checked + .log-toggle-track .log-toggle-thumb { transform: translateX(16px); }
+
         canvas { touch-action: pan-y !important; height: 220px; width: 100%; }
-        .zoom-hint { font-weight: normal; font-size: 12px; color: var(--muted); margin-left: 5px; }
-        .badge { background: var(--border); padding: 2px 6px; border-radius: 4px; font-size: 0.8em; margin-left: 5px; color: var(--text); }
+        .zoom-hint { font-weight: 400; font-size: 11px; color: var(--text-gray); margin-left: 8px; text-transform: none; letter-spacing: 0;}
         
-        /* Mobile Breakpoint for Header */
         @media(max-width: 768px) {
+            body { padding: 16px; }
             .status-bar { flex-direction: column; text-align: center; } 
-            .header-title { font-size: 1.3rem; justify-content: center; }
+            .header-title { justify-content: center; }
             .status-controls { width: 100%; justify-content: center; }
         }
     </style>
@@ -333,36 +416,54 @@ cat <<'HTML_EOF' > "$HTML_FILE"
         <div class="status-bar">
             <h2 class="header-title">
                 <a href="../index.html" class="btn-home" title="Back to Dashboard">🏠</a>
-                <span>⚡ Keenetic Ping Monitor</span>
+                <span>Connection Monitor</span>
             </h2>
             <div class="status-controls">
-                <div>Last Update: <span id="lastUpdate" style="font-weight:700">Loading...</span></div>
+                <div style="font-size: 14px; color: var(--text-gray);">Last Update: <span id="lastUpdate" style="font-weight:500; color:var(--primary-text)">Loading...</span></div>
+                <div class="refresh-wrapper">
+                    <select id="refresh_timer" class="refresh-select" onchange="changeRefreshRate(this.value)">
+                        <option value="0">Auto-Refresh: OFF</option>
+                        <option value="10000">10 Seconds</option>
+                        <option value="30000">30 Seconds</option>
+                        <option value="60000">1 Minute</option>
+                        <option value="300000">5 Minutes</option>
+                    </select>
+                    <span class="refresh-arrow">▼</span>
+                </div>
                 <a href="javascript:location.reload()" class="btn-refresh">Refresh</a>
             </div>
         </div>
 
-        <h3 style="border-left: 4px solid var(--blue); padding-left: 10px; display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
-            IPv4 <span class="badge" id="targetV4"></span> 
-            <span style="font-size:13px; font-weight:400; color:var(--muted); margin-left:10px" id="countV4"></span>
-        </h3>
+        <div class="section-header v4">
+            IPv4 Target: <span class="badge" id="targetV4"></span> 
+            <span class="samples" id="countV4"></span>
+        </div>
         
         <div class="grid">
-            <div class="card"><h2>Latency</h2><div class="val" style="color:var(--blue)" id="v4_p">-</div><small>Avg: <span id="v4_avg_p">-</span></small></div>
-            <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--orange)" id="v4_j">-</div><small>Avg: <span id="v4_avg_j">-</span></small></div>
-            <div class="card"><h2>Loss</h2><div class="val" style="color:var(--red)" id="v4_l">-</div><small>Avg: <span id="v4_avg_l">-</span></small></div>
+            <div class="card"><h2>Latency</h2><div class="val" style="color:var(--blue)" id="v4_p">-</div><div class="avg">Avg: <span id="v4_avg_p">-</span></div></div>
+            <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--orange)" id="v4_j">-</div><div class="avg">Avg: <span id="v4_avg_j">-</span></div></div>
+            <div class="card"><h2>Loss</h2><div class="val" style="color:var(--red)" id="v4_l">-</div><div class="avg">Avg: <span id="v4_avg_l">-</span></div></div>
         </div>
         
         <div class="chart-box">
             <div class="chart-header">
                 <div class="chart-title" style="color:var(--blue)">Latency (ms) <span class="zoom-hint">(Select area to zoom)</span></div>
-                <div class="chart-controls"><label><input type="checkbox" autocomplete="off" onchange="toggleLog(this, 'c_p4')"> Log Scale</label></div>
+                <label class="log-toggle-wrapper">
+                    <input type="checkbox" class="log-toggle-input" autocomplete="off" onchange="toggleLog(this, 'c_p4')">
+                    <div class="log-toggle-track"><div class="log-toggle-thumb"></div></div>
+                    Log Scale
+                </label>
             </div>
             <div style="position:relative; height:220px"><canvas id="c_p4"></canvas></div>
         </div>
         <div class="chart-box">
             <div class="chart-header">
                 <div class="chart-title" style="color:var(--orange)">Jitter (ms)</div>
-                <div class="chart-controls"><label><input type="checkbox" autocomplete="off" onchange="toggleLog(this, 'c_j4')"> Log Scale</label></div>
+                <label class="log-toggle-wrapper">
+                    <input type="checkbox" class="log-toggle-input" autocomplete="off" onchange="toggleLog(this, 'c_j4')">
+                    <div class="log-toggle-track"><div class="log-toggle-thumb"></div></div>
+                    Log Scale
+                </label>
             </div>
             <div style="position:relative; height:220px"><canvas id="c_j4"></canvas></div>
         </div>
@@ -372,28 +473,36 @@ cat <<'HTML_EOF' > "$HTML_FILE"
         </div>
 
         <div id="ipv6_section">
-            <h3 style="border-left: 4px solid var(--teal); padding-left: 10px; margin-top: 40px; display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
-                IPv6 <span class="badge" id="targetV6"></span>
-                <span style="font-size:13px; font-weight:400; color:var(--muted); margin-left:10px" id="countV6"></span>
-            </h3>
+            <div class="section-header v6">
+                IPv6 Target: <span class="badge" id="targetV6"></span>
+                <span class="samples" id="countV6"></span>
+            </div>
             
             <div class="grid">
-                <div class="card"><h2>Latency</h2><div class="val" style="color:var(--teal)" id="v6_p">-</div><small>Avg: <span id="v6_avg_p">-</span></small></div>
-                <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--purple)" id="v6_j">-</div><small>Avg: <span id="v6_avg_j">-</span></small></div>
-                <div class="card"><h2>Loss</h2><div class="val" style="color:var(--darkred)" id="v6_l">-</div><small>Avg: <span id="v6_avg_l">-</span></small></div>
+                <div class="card"><h2>Latency</h2><div class="val" style="color:var(--teal)" id="v6_p">-</div><div class="avg">Avg: <span id="v6_avg_p">-</span></div></div>
+                <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--purple)" id="v6_j">-</div><div class="avg">Avg: <span id="v6_avg_j">-</span></div></div>
+                <div class="card"><h2>Loss</h2><div class="val" style="color:var(--darkred)" id="v6_l">-</div><div class="avg">Avg: <span id="v6_avg_l">-</span></div></div>
             </div>
 
             <div class="chart-box">
                 <div class="chart-header">
                     <div class="chart-title" style="color:var(--teal)">Latency (ms) <span class="zoom-hint">(Select area to zoom)</span></div>
-                    <div class="chart-controls"><label><input type="checkbox" autocomplete="off" onchange="toggleLog(this, 'c_p6')"> Log Scale</label></div>
+                    <label class="log-toggle-wrapper">
+                        <input type="checkbox" class="log-toggle-input" autocomplete="off" onchange="toggleLog(this, 'c_p6')">
+                        <div class="log-toggle-track"><div class="log-toggle-thumb"></div></div>
+                        Log Scale
+                    </label>
                 </div>
                 <div style="position:relative; height:220px"><canvas id="c_p6"></canvas></div>
             </div>
             <div class="chart-box">
                 <div class="chart-header">
                     <div class="chart-title" style="color:var(--purple)">Jitter (ms)</div>
-                    <div class="chart-controls"><label><input type="checkbox" autocomplete="off" onchange="toggleLog(this, 'c_j6')"> Log Scale</label></div>
+                    <label class="log-toggle-wrapper">
+                        <input type="checkbox" class="log-toggle-input" autocomplete="off" onchange="toggleLog(this, 'c_j6')">
+                        <div class="log-toggle-track"><div class="log-toggle-thumb"></div></div>
+                        Log Scale
+                    </label>
                 </div>
                 <div style="position:relative; height:220px"><canvas id="c_j6"></canvas></div>
             </div>
@@ -423,18 +532,38 @@ cat <<'HTML_EOF' > "$HTML_FILE"
                 }
             },
             scales: { 
-                x: { type: 'time', time: { tooltipFormat: 'dd/MM/yyyy HH:mm', displayFormats: { minute: 'HH:mm', hour: 'dd/MM HH:mm', day: 'dd/MM' } }, ticks: { maxRotation: 0, autoSkip: true } }, 
-                y: { beginAtZero: true } 
+                x: { 
+                    type: 'time', 
+                    time: { tooltipFormat: 'dd/MM/yyyy HH:mm', displayFormats: { minute: 'HH:mm', hour: 'dd/MM HH:mm', day: 'dd/MM' } }, 
+                    ticks: { maxRotation: 0, autoSkip: true, color: '#6e6e6e' },
+                    grid: { color: 'rgba(110,110,110,0.1)' }
+                }, 
+                y: { 
+                    beginAtZero: true,
+                    ticks: { color: '#6e6e6e' },
+                    grid: { color: 'rgba(110,110,110,0.1)' }
+                } 
             },
-            elements: { point: { radius: 2, hoverRadius: 5 } }
+            elements: { point: { radius: 1, hoverRadius: 5 } }
         };
 
         function toggleLog(cb, id) { 
             const c = Chart.getChart(id); 
             if(c) { 
-                c.options.scales.y = cb.checked ? { type: 'logarithmic', min: 0.1, beginAtZero: false } : { type: 'linear', beginAtZero: true };
+                c.options.scales.y = cb.checked ? { type: 'logarithmic', min: 0.1, beginAtZero: false, ticks: { color: '#6e6e6e' }, grid: { color: 'rgba(110,110,110,0.1)' } } : { type: 'linear', beginAtZero: true, ticks: { color: '#6e6e6e' }, grid: { color: 'rgba(110,110,110,0.1)' } };
                 c.update(); 
             } 
+        }
+
+        let refreshIntervalId = null;
+        
+        function changeRefreshRate(msStr) {
+            localStorage.setItem('ping_refresh_rate', msStr);
+            if (refreshIntervalId) clearInterval(refreshIntervalId);
+            const ms = parseInt(msStr);
+            if (ms > 0) {
+                refreshIntervalId = setInterval(() => location.reload(), ms);
+            }
         }
 
         function render() {
@@ -453,12 +582,12 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             document.getElementById('countV4').innerText = "(" + d.history.v4.length + " samples)";
 
             // Update DOM V4
-            document.getElementById('v4_p').innerText = d.current.v4.ping + "ms";
-            document.getElementById('v4_j').innerText = d.current.v4.jitter + "ms";
-            document.getElementById('v4_l').innerText = d.current.v4.loss + "%";
-            document.getElementById('v4_avg_p').innerText = d.averages.v4.p;
-            document.getElementById('v4_avg_j').innerText = d.averages.v4.j;
-            document.getElementById('v4_avg_l').innerText = d.averages.v4.l;
+            document.getElementById('v4_p').innerText = d.current.v4.ping + " ms";
+            document.getElementById('v4_j').innerText = d.current.v4.jitter + " ms";
+            document.getElementById('v4_l').innerText = d.current.v4.loss + " %";
+            document.getElementById('v4_avg_p').innerText = d.averages.v4.p + " ms";
+            document.getElementById('v4_avg_j').innerText = d.averages.v4.j + " ms";
+            document.getElementById('v4_avg_l').innerText = d.averages.v4.l + " %";
 
             const createChart = (id, dArr, color, isBar=false) => {
                 if(!document.getElementById(id)) return; // Skip if element hidden/missing
@@ -467,27 +596,31 @@ cat <<'HTML_EOF' > "$HTML_FILE"
                     data: { datasets: [{ 
                         data: dArr, 
                         borderColor: color, backgroundColor: color, 
-                        borderWidth: 1, fill: false 
+                        borderWidth: 1.5, fill: false 
                     }] },
                     options: commonOptions
                 });
             };
 
-            createChart('c_p4', d.history.v4.map(i=>({x:i.x, y:i.p})), '#007bff');
+            const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const cBlue = isDark ? '#77bce4' : '#0097dc';
+            const cRed = isDark ? '#ea4c4c' : '#de3d3d';
+
+            createChart('c_p4', d.history.v4.map(i=>({x:i.x, y:i.p})), cBlue);
             createChart('c_j4', d.history.v4.map(i=>({x:i.x, y:i.j})), '#fd7e14');
-            createChart('c_l4', d.history.v4.map(i=>({x:i.x, y:i.l})), '#dc3545', true);
+            createChart('c_l4', d.history.v4.map(i=>({x:i.x, y:i.l})), cRed, true);
 
             // ONLY RENDER IPv6 IF ENABLED
             if (d.config.ipv6) {
                 document.getElementById('targetV6').innerText = d.targets.v6;
                 document.getElementById('countV6').innerText = "(" + d.history.v6.length + " samples)";
                 
-                document.getElementById('v6_p').innerText = d.current.v6.ping + "ms";
-                document.getElementById('v6_j').innerText = d.current.v6.jitter + "ms";
-                document.getElementById('v6_l').innerText = d.current.v6.loss + "%";
-                document.getElementById('v6_avg_p').innerText = d.averages.v6.p;
-                document.getElementById('v6_avg_j').innerText = d.averages.v6.j;
-                document.getElementById('v6_avg_l').innerText = d.averages.v6.l;
+                document.getElementById('v6_p').innerText = d.current.v6.ping + " ms";
+                document.getElementById('v6_j').innerText = d.current.v6.jitter + " ms";
+                document.getElementById('v6_l').innerText = d.current.v6.loss + " %";
+                document.getElementById('v6_avg_p').innerText = d.averages.v6.p + " ms";
+                document.getElementById('v6_avg_j').innerText = d.averages.v6.j + " ms";
+                document.getElementById('v6_avg_l').innerText = d.averages.v6.l + " %";
 
                 createChart('c_p6', d.history.v6.map(i=>({x:i.x, y:i.p})), '#20c997');
                 createChart('c_j6', d.history.v6.map(i=>({x:i.x, y:i.j})), '#6f42c1');
@@ -495,6 +628,11 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             }
 
             document.querySelectorAll('canvas').forEach(c => { c.ondblclick = () => Chart.getChart(c).resetZoom(); });
+            
+            // Set Refresh Rate from LocalStorage
+            const savedMs = localStorage.getItem('ping_refresh_rate') || "0";
+            document.getElementById('refresh_timer').value = savedMs;
+            changeRefreshRate(savedMs);
         }
         render();
     </script>
