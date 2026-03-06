@@ -2,14 +2,16 @@
 export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 
 # ==============================================================================
-# KEENETIC PINGTOOL v1.7.2 (KEENETIC UI REFACTOR)
+# KEENETIC PINGTOOL v1.7.3 (KEENETIC UI REFACTOR)
 # Features:
-# - FIX: Wrong comma evaluation for packet loss
 # - UI: Fully redesigned HTML template to match native KeeneticOS dashboard.
 # - NEW: Added email notification when MTR is triggered 
 # - CLI: Added '-ipv4' flag to force IPv4-only mode at runtime.
 # - CLI: Arguments handling allows mixing flags (e.g., "-ipv4 force").
 # - CORE: Optimized DB writes & UI hiding logic.
+# - CORE (v1.7.2): Fixed regex parsing bug causing invalid packet loss values.
+# - CORE (v1.7.3): Added async MTR execution and anti-spam cooldown for emails.
+# - CORE (v1.7.3): Replaced 'date -r' with 'find' for better BusyBox compatibility.
 # ==============================================================================
 
 # ==============================================================================
@@ -54,7 +56,8 @@ done
 # LOCK MANAGEMENT & INIT
 # ==============================================================================
 if [ -f "$LOCK_FILE" ]; then
-    if [ $(($(date +%s) - $(date +%s -r "$LOCK_FILE"))) -gt 180 ]; then
+
+    if [ -n "$(find /tmp -name 'pingtool.lock' -mmin +3 2>/dev/null)" ]; then
         echo "WARNING: Stale lock file found (>3 min). Forcing removal."
         rm -f "$LOCK_FILE"
     else
@@ -165,23 +168,30 @@ if [ "$LOSS" -gt 0 ] || [ "$IS_HIGH_V4" -eq 1 ]; then
     LOG_MSG="[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ IPv4 Alert: Ping=$AVG_PING ms | Loss=$LOSS%"
     echo "$LOG_MSG" >> "$INCIDENT_LOG"
     
-    MTR_REPORT=""
-    if command -v mtr >/dev/null 2>&1; then
-        echo "   -> Running MTR trace..."
-        MTR_REPORT=$(mtr -4 -r -c 10 -w "$PING_TARGET")
-        
-        echo "--- MTR IPv4 Report ---" >> "$INCIDENT_LOG"
-        echo "$MTR_REPORT" >> "$INCIDENT_LOG"
-        echo "-----------------------" >> "$INCIDENT_LOG"
+    COOLDOWN_FILE_V4="/tmp/ping_alert_v4.lock"
+    
+    # Check if an alert was already sent in the last 10 minutes
+    if [ -n "$(find /tmp -name 'ping_alert_v4.lock' -mmin -10 2>/dev/null)" ]; then
+        echo "   -> Alert sent recently. Skipping email and MTR to prevent spam."
     else
-        MTR_REPORT="(MTR not installed)"
-        echo "Error: mtr not found" >> "$INCIDENT_LOG"
-    fi
+        echo "   -> Starting MTR trace in background..."
+        touch "$COOLDOWN_FILE_V4"
+        
+        # Asynchronous subprocess: MTR and email sending happen in the background
+        (
+            if command -v mtr >/dev/null 2>&1; then
+                MTR_REPORT=$(mtr -4 -r -c 10 -w "$PING_TARGET")
+                echo -e "--- MTR IPv4 Report ---\n$MTR_REPORT\n-----------------------" >> "$INCIDENT_LOG"
+            else
+                MTR_REPORT="(MTR not installed)"
+                echo "Error: mtr not found" >> "$INCIDENT_LOG"
+            fi
 
-    # SEND EMAIL (If module exists)
-    if [ "$EMAIL_ALERTS" = "true" ] && [ -x "$EMAIL_MOD" ]; then
-        EMAIL_BODY="⚠️ Connection Instability Detected (IPv4)\n\nTarget: $PING_TARGET\nLatency: $AVG_PING ms (Threshold: $TRIGGER_LATENCY ms)\nPacket Loss: $LOSS%\n\n--- Diagnostic Report (MTR) ---\n$MTR_REPORT"
-        "$EMAIL_MOD" "Ping Alert (IPv4)" "$EMAIL_BODY" &
+            if [ "$EMAIL_ALERTS" = "true" ] && [ -x "$EMAIL_MOD" ]; then
+                EMAIL_BODY="⚠️ Connection Instability Detected (IPv4)\n\nTarget: $PING_TARGET\nLatency: $AVG_PING ms (Threshold: $TRIGGER_LATENCY ms)\nPacket Loss: $LOSS%\n\n--- Diagnostic Report (MTR) ---\n$MTR_REPORT"
+                "$EMAIL_MOD" "Ping Alert (IPv4)" "$EMAIL_BODY"
+            fi
+        ) &
     fi
 fi
 
@@ -194,23 +204,30 @@ if [ "$ENABLE_IPV6" = "true" ]; then
         LOG_MSG="[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ IPv6 Alert: Ping=$AVG_PING_V6 ms | Loss=$LOSS_V6%"
         echo "$LOG_MSG" >> "$INCIDENT_LOG"
         
-        MTR_REPORT_V6=""
-        if command -v mtr >/dev/null 2>&1; then
-            echo "   -> Running MTR trace..."
-            MTR_REPORT_V6=$(mtr -6 -r -c 10 -w "$PING_TARGET_V6")
-            
-            echo "--- MTR IPv6 Report ---" >> "$INCIDENT_LOG"
-            echo "$MTR_REPORT_V6" >> "$INCIDENT_LOG"
-            echo "-----------------------" >> "$INCIDENT_LOG"
-        else
-            MTR_REPORT_V6="(MTR not installed)"
-            echo "Error: mtr not found" >> "$INCIDENT_LOG"
-        fi
+        COOLDOWN_FILE_V6="/tmp/ping_alert_v6.lock"
 
-        # SEND EMAIL
-        if [ "$EMAIL_ALERTS" = "true" ] && [ -x "$EMAIL_MOD" ]; then
-            EMAIL_BODY="⚠️ Connection Instability Detected (IPv6)\n\nTarget: $PING_TARGET_V6\nLatency: $AVG_PING_V6 ms\nPacket Loss: $LOSS_V6%\n\n--- Diagnostic Report (MTR) ---\n$MTR_REPORT_V6"
-            "$EMAIL_MOD" "Ping Alert (IPv6)" "$EMAIL_BODY" &
+        # Check if an alert was already sent in the last 10 minutes
+        if [ -n "$(find /tmp -name 'ping_alert_v6.lock' -mmin -10 2>/dev/null)" ]; then
+            echo "   -> Alert sent recently. Skipping email and MTR to prevent spam."
+        else
+            echo "   -> Starting MTR trace in background..."
+            touch "$COOLDOWN_FILE_V6"
+            
+            # Asynchronous subprocess: MTR and email sending happen in the background
+            (
+                if command -v mtr >/dev/null 2>&1; then
+                    MTR_REPORT_V6=$(mtr -6 -r -c 10 -w "$PING_TARGET_V6")
+                    echo -e "--- MTR IPv6 Report ---\n$MTR_REPORT_V6\n-----------------------" >> "$INCIDENT_LOG"
+                else
+                    MTR_REPORT_V6="(MTR not installed)"
+                    echo "Error: mtr not found" >> "$INCIDENT_LOG"
+                fi
+
+                if [ "$EMAIL_ALERTS" = "true" ] && [ -x "$EMAIL_MOD" ]; then
+                    EMAIL_BODY="⚠️ Connection Instability Detected (IPv6)\n\nTarget: $PING_TARGET_V6\nLatency: $AVG_PING_V6 ms\nPacket Loss: $LOSS_V6%\n\n--- Diagnostic Report (MTR) ---\n$MTR_REPORT_V6"
+                    "$EMAIL_MOD" "Ping Alert (IPv6)" "$EMAIL_BODY"
+                fi
+            ) &
         fi
     fi
 fi
