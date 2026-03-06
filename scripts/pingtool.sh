@@ -2,8 +2,9 @@
 export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 
 # ==============================================================================
-# KEENETIC PINGTOOL v1.7.1 (KEENETIC UI REFACTOR)
+# KEENETIC PINGTOOL v1.7.2 (KEENETIC UI REFACTOR)
 # Features:
+# - FIX: Wrong comma evaluation for packet loss
 # - UI: Fully redesigned HTML template to match native KeeneticOS dashboard.
 # - NEW: Added email notification when MTR is triggered 
 # - CLI: Added '-ipv4' flag to force IPv4-only mode at runtime.
@@ -101,7 +102,7 @@ echo -n " - Testing IPv4 ($PING_TARGET)... "
 TMP_PING="/tmp/pingtool_v4.tmp"
 ping -w "$PING_DURATION" -i 1 "$PING_TARGET" > "$TMP_PING"
 
-LOSS=$(grep -oP '\d+(?=% packet loss)' "$TMP_PING"); [ -z "$LOSS" ] && LOSS=100
+LOSS=$(grep -oP '[0-9.]+(?=% packet loss)' "$TMP_PING" | awk -F. '{print $1}'); [ -z "$LOSS" ] && LOSS=100
 AVG_PING=$(tail -n 1 "$TMP_PING" | awk -F '/' '{print $5}' | sed 's/[^0-9.]//g'); [ -z "$AVG_PING" ] && AVG_PING=0
 
 if [ "$LOSS" -lt 100 ]; then
@@ -125,7 +126,7 @@ if [ "$ENABLE_IPV6" = "true" ]; then
     PING6_CMD="ping6"; command -v ping6 >/dev/null 2>&1 || PING6_CMD="ping -6"
     $PING6_CMD -w "$PING_DURATION" -i 1 "$PING_TARGET_V6" > "$TMP_PING_V6" 2>/dev/null
 
-    LOSS_V6=$(grep -oP '\d+(?=% packet loss)' "$TMP_PING_V6"); [ -z "$LOSS_V6" ] && LOSS_V6=100
+    LOSS_V6=$(grep -oP '[0-9.]+(?=% packet loss)' "$TMP_PING_V6" | awk -F. '{print $1}'); [ -z "$LOSS_V6" ] && LOSS_V6=100
     AVG_PING_V6=$(tail -n 1 "$TMP_PING_V6" | awk -F '/' '{print $5}' | sed 's/[^0-9.]//g'); [ -z "$AVG_PING_V6" ] && AVG_PING_V6=0
 
     if [ "$LOSS_V6" -lt 100 ]; then
