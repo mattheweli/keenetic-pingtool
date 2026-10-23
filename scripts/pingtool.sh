@@ -1,5 +1,11 @@
 #!/opt/bin/bash
-export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
+# KEENETIC PINGTOOL v2.0.0
+# Release: 2026-10-22 | Stable. See CHANGELOG.md for release details.
+
+export PATH=${KT_PATH:-/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin}
+# Pingtool 2.0.0
+. "${KT_COMMON:-/opt/lib/keentool/common.sh}" || exit 1
+
 
 # ==============================================================================
 # KEENETIC PINGTOOL v1.7.3 (KEENETIC UI REFACTOR)
@@ -19,6 +25,9 @@ export PATH=/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin
 # ==============================================================================
 ENABLE_IPV6="true"  # Default behavior (can be overridden by -ipv4 flag)
 EMAIL_ALERTS="true"
+WAN_LABEL=""  # Optional notification label; empty discovers the route interface.
+WAN_SYSLOG_FILE="/opt/var/log/messages"
+WAN_SYSLOG_ENABLED="true"
 PING_TARGET="8.8.8.8"
 PING_TARGET_V6="2001:4860:4860::8888"
 PING_DURATION=30
@@ -37,8 +46,15 @@ URL_ADAPTER="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-
 URL_ZOOM="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"
 
 # ==============================================================================
+# External settings survive script updates. Values are root-owned shell assignments.
 # ARGUMENT PARSING
 # ==============================================================================
+PING_CONF="${KT_PING_CONF:-/opt/etc/pingtool.conf}"
+[ ! -f "$PING_CONF" ] || . "$PING_CONF"
+WEB_DIR="${KT_PING_WEB:-$WEB_DIR}"; DB_FILE="${KT_PING_DB:-$DB_FILE}"; DB_DIR=$(dirname "$DB_FILE")
+export LC_ALL=C
+sqlite3() { kt_sqlite "$@"; }
+[[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] && [ "$RETENTION_DAYS" -ge 1 ] && [ "$RETENTION_DAYS" -le 3650 ] || { echo 'RETENTION_DAYS must be 1..3650' >&2;exit 1; }
 FORCE_HTML_GEN="false"
 
 for arg in "$@"; do
@@ -55,19 +71,7 @@ done
 # ==============================================================================
 # LOCK MANAGEMENT & INIT
 # ==============================================================================
-if [ -f "$LOCK_FILE" ]; then
-
-    if [ -n "$(find /tmp -name 'pingtool.lock' -mmin +3 2>/dev/null)" ]; then
-        echo "WARNING: Stale lock file found (>3 min). Forcing removal."
-        rm -f "$LOCK_FILE"
-    else
-        echo "Script already running. Exiting."
-        exit 1
-    fi
-fi
-touch "$LOCK_FILE"
-trap "rm -f $LOCK_FILE" EXIT
-
+kt_init pingtool || exit $?
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] pingtool: Starting test (IPv6: $ENABLE_IPV6)..."
 
 mkdir -p "$DB_DIR"
@@ -76,9 +80,9 @@ mkdir -p "$WEB_DIR"
 # --- CHECK & DOWNLOAD DEPENDENCIES ---
 download_lib() {
     URL=$1; FILE=$2
-    if [ ! -f "$WEB_DIR/$FILE" ]; then
+    if [ ! -s "$WEB_DIR/$FILE" ]; then
         echo " - Missing library $FILE. Downloading..."
-        wget --no-check-certificate -q -O "$WEB_DIR/$FILE" "$URL"
+        kt_download "$URL" "$WEB_DIR/$FILE"
         if [ $? -eq 0 ]; then echo "   [OK] Downloaded $FILE"; else echo "   [ERR] Failed to download $FILE"; fi
     fi
 }
@@ -86,68 +90,70 @@ download_lib() {
 download_lib "$URL_CHARTJS" "chart.js"
 download_lib "$URL_ADAPTER" "chartjs-adapter-date-fns.js"
 download_lib "$URL_ZOOM" "chartjs-plugin-zoom.js"
+for public_asset in chart.js chartjs-adapter-date-fns.js chartjs-plugin-zoom.js; do
+    [ ! -f "$WEB_DIR/$public_asset" ] || chmod 644 "$WEB_DIR/$public_asset" || exit 1
+done
 
 # --- DB INIT ---
-if [ ! -f "$DB_FILE" ]; then
-    echo " - First run: Initializing SQLite Database..."
+if true; then
+    echo " - Checking SQLite schema..."
     sqlite3 "$DB_FILE" "CREATE TABLE IF NOT EXISTS stats (id INTEGER PRIMARY KEY, timestamp INTEGER, ping REAL, jitter REAL, loss REAL);"
     sqlite3 "$DB_FILE" "CREATE INDEX IF NOT EXISTS idx_ts ON stats (timestamp);"
     sqlite3 "$DB_FILE" "CREATE TABLE IF NOT EXISTS stats_v6 (id INTEGER PRIMARY KEY, timestamp INTEGER, ping REAL, jitter REAL, loss REAL);"
     sqlite3 "$DB_FILE" "CREATE INDEX IF NOT EXISTS idx_ts_v6 ON stats_v6 (timestamp);"
 fi
 
+# Notification labels describe the route selected at the start of each check.
+# WAN_LABEL is a display override; it does not bind ping to an interface.
+notification_wan() {
+    local family="$1" target="$2" route_label
+    if [[ "$WAN_LABEL" =~ ^[a-zA-Z0-9_.:-]+$ ]]; then printf '%s' "$WAN_LABEL"; return; fi
+    route_label=$(ip "-$family" route get "$target" 2>/dev/null | awk '{for(i=1;i<NF;i++)if($i=="dev"){print $(i+1);exit}}')
+    printf '%s' "${route_label:-WAN unknown}"
+}
+recovery_message() {
+    local label="$1" began="$2" finished="$3" target="$4" elapsed
+    printf '%s target reachability restored.\nTarget: %s\n' "$label" "$target"
+    if [[ "$began" =~ ^[0-9]+$ ]] && [ "$finished" -ge "$began" ]; then
+        elapsed=$((finished-began))
+        printf 'Time between first check with 100%% packet loss and first check receiving a reply: %dm %02ds (%s seconds).\nThis is a sampled reachability window, not a measured continuous outage. It does not establish that the WAN or PPP session disconnected.' "$((elapsed/60))" "$((elapsed%60))" "$elapsed"
+    else
+        printf 'Sampled interval unavailable: invalid timestamp or system clock moved backwards.'
+    fi
+}
+WAN_V4=$(notification_wan 4 "$PING_TARGET")
+WAN_V6=$(notification_wan 6 "$PING_TARGET_V6")
+LABEL_V4="$WAN_V4 · IPv4"
+LABEL_V6="$WAN_V6 · IPv6"
+
 NOW=$(date +%s)
 
 # ==============================================================================
-# IPv4 TEST
+# PARALLEL MEASUREMENTS: both families share the sampling timestamp.
 # ==============================================================================
-echo -n " - Testing IPv4 ($PING_TARGET)... "
-TMP_PING="/tmp/pingtool_v4.tmp"
-ping -w "$PING_DURATION" -i 1 "$PING_TARGET" > "$TMP_PING"
-
-LOSS=$(grep -oP '[0-9.]+(?=% packet loss)' "$TMP_PING" | awk -F. '{print $1}'); [ -z "$LOSS" ] && LOSS=100
-AVG_PING=$(tail -n 1 "$TMP_PING" | awk -F '/' '{print $5}' | sed 's/[^0-9.]//g'); [ -z "$AVG_PING" ] && AVG_PING=0
-
-if [ "$LOSS" -lt 100 ]; then
-    TIMES=$(grep "time=" "$TMP_PING" | sed 's/.*time=\([0-9.]*\) .*/\1/')
-    JITTER=$(echo "$TIMES" | awk 'BEGIN {prev=0;td=0;c=0;f=1} {cur=$1; if(f==0){d=cur-prev; if(d<0)d=-d; td+=d; c++} prev=cur; f=0} END {if(c>0)printf "%.2f",td/c; else print "0"}')
-else 
-    JITTER=0
+[[ "$PING_DURATION" =~ ^[0-9]+$ ]] && [ "$PING_DURATION" -ge 1 ] && [ "$PING_DURATION" -le 50 ] || { echo 'PING_DURATION must be 1..50' >&2; exit 1; }
+TMP_PING="$KT_WORKDIR/v4"; TMP_PING_V6="$KT_WORKDIR/v6"
+ping -4 -w "$PING_DURATION" -i 1 "$PING_TARGET" > "$TMP_PING" 2>&1 & PID4=$!
+if [ "$ENABLE_IPV6" = true ]; then
+    if command -v ping6 >/dev/null 2>&1; then ping6 -w "$PING_DURATION" -i 1 "$PING_TARGET_V6" > "$TMP_PING_V6" 2>&1 &
+    else ping -6 -w "$PING_DURATION" -i 1 "$PING_TARGET_V6" > "$TMP_PING_V6" 2>&1 & fi
+    PID6=$!
 fi
-
-echo "Ping=$AVG_PING ms | Jitter=$JITTER ms | Loss=$LOSS%"
-sqlite3 "$DB_FILE" "INSERT INTO stats (timestamp, ping, jitter, loss) VALUES ($NOW, $AVG_PING, $JITTER, $LOSS);"
-
-# ==============================================================================
-# IPv6 TEST (Conditional)
-# ==============================================================================
-LOSS_V6=0; AVG_PING_V6=0; JITTER_V6=0
-
-if [ "$ENABLE_IPV6" = "true" ]; then
-    echo -n " - Testing IPv6 ($PING_TARGET_V6)... "
-    TMP_PING_V6="/tmp/pingtool_v6.tmp"
-    PING6_CMD="ping6"; command -v ping6 >/dev/null 2>&1 || PING6_CMD="ping -6"
-    $PING6_CMD -w "$PING_DURATION" -i 1 "$PING_TARGET_V6" > "$TMP_PING_V6" 2>/dev/null
-
-    LOSS_V6=$(grep -oP '[0-9.]+(?=% packet loss)' "$TMP_PING_V6" | awk -F. '{print $1}'); [ -z "$LOSS_V6" ] && LOSS_V6=100
-    AVG_PING_V6=$(tail -n 1 "$TMP_PING_V6" | awk -F '/' '{print $5}' | sed 's/[^0-9.]//g'); [ -z "$AVG_PING_V6" ] && AVG_PING_V6=0
-
-    if [ "$LOSS_V6" -lt 100 ]; then
-        TIMES_V6=$(grep "time=" "$TMP_PING_V6" | sed 's/.*time=\([0-9.]*\) .*/\1/')
-        JITTER_V6=$(echo "$TIMES_V6" | awk 'BEGIN {prev=0;td=0;c=0;f=1} {cur=$1; if(f==0){d=cur-prev; if(d<0)d=-d; td+=d; c++} prev=cur; f=0} END {if(c>0)printf "%.2f",td/c; else print "0"}')
-    else 
-        JITTER_V6=0
-    fi
-
-    echo "Ping=$AVG_PING_V6 ms | Jitter=$JITTER_V6 ms | Loss=$LOSS_V6%"
-    sqlite3 "$DB_FILE" "INSERT INTO stats_v6 (timestamp, ping, jitter, loss) VALUES ($NOW, $AVG_PING_V6, $JITTER_V6, $LOSS_V6);"
-    rm -f "$TMP_PING_V6"
-else
-    echo " - IPv6 Testing Disabled (by config or flag)."
-fi
-
-rm -f "$TMP_PING"
-
+wait "$PID4" || :
+[ "$ENABLE_IPV6" != true ] || wait "$PID6" || :
+parse_ping() {
+    awk '
+    /packet loss/ { for(i=1;i<=NF;i++) if($i=="packet" && $(i+1) ~ /^loss/) { loss=$(i-1); gsub(/%/,"",loss) } }
+    /time[=<]/ { line=$0; sub(/^.*time[=<]/,"",line); sub(/ .*/,"",line); if(line ~ /^[0-9.]+$/) { t=line+0; sum+=t; n++; if(n>1) {d=t-prev; if(d<0)d=-d; diff+=d}; prev=t } }
+    END { if(loss=="")loss=100; if(n>0) printf "%.3f %.3f %.3f\n",sum/n,(n>1?diff/(n-1):0),loss; else printf "NULL NULL %.3f\n",loss }
+    ' "$1"
+}
+read -r AVG_PING JITTER LOSS < <(parse_ping "$TMP_PING")
+AVG_PING_V6=NULL; JITTER_V6=NULL; LOSS_V6=0
+if [ "$ENABLE_IPV6" = true ]; then read -r AVG_PING_V6 JITTER_V6 LOSS_V6 < <(parse_ping "$TMP_PING_V6"); fi
+sqlite3 "$DB_FILE" "BEGIN; INSERT INTO stats(timestamp,ping,jitter,loss) VALUES($NOW,$AVG_PING,$JITTER,$LOSS); COMMIT;" || exit 1
+if [ "$ENABLE_IPV6" = true ]; then sqlite3 "$DB_FILE" "INSERT INTO stats_v6(timestamp,ping,jitter,loss) VALUES($NOW,$AVG_PING_V6,$JITTER_V6,$LOSS_V6);" || exit 1; fi
+kt_log "v4=$AVG_PING jitter=$JITTER loss=$LOSS%; v6=$AVG_PING_V6 loss=$LOSS_V6%"
 # ==============================================================================
 # CLEANUP & ALERTS
 # ==============================================================================
@@ -161,11 +167,11 @@ INCIDENT_LOG="$WEB_DIR/incidents.txt"
 EMAIL_MOD="/opt/bin/email_sender.mod"
 
 # --- Alert Logic IPv4 ---
-IS_HIGH_V4=$(awk -v p="$AVG_PING" -v t="$TRIGGER_LATENCY" 'BEGIN {print (p > t ? 1 : 0)}')
+IS_HIGH_V4=$(awk -v p="$AVG_PING" -v t="$TRIGGER_LATENCY" 'BEGIN {print (p != "NULL" && p+0 > t+0 ? 1 : 0)}')
 
-if [ "$LOSS" -gt 0 ] || [ "$IS_HIGH_V4" -eq 1 ]; then
+if [ "$(awk -v l="$LOSS" 'BEGIN{print(l+0>0)}')" = 1 ] || [ "$IS_HIGH_V4" -eq 1 ]; then
     echo " ! ALERT IPv4: Anomalous values detected."
-    LOG_MSG="[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ IPv4 Alert: Ping=$AVG_PING ms | Loss=$LOSS%"
+    LOG_MSG="[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ $LABEL_V4 Alert: Ping=$AVG_PING ms | Loss=$LOSS%"
     echo "$LOG_MSG" >> "$INCIDENT_LOG"
     
     COOLDOWN_FILE_V4="/tmp/ping_alert_v4.lock"
@@ -180,7 +186,7 @@ if [ "$LOSS" -gt 0 ] || [ "$IS_HIGH_V4" -eq 1 ]; then
         # Asynchronous subprocess: MTR and email sending happen in the background
         (
             if command -v mtr >/dev/null 2>&1; then
-                MTR_REPORT=$(mtr -4 -r -c 10 -w "$PING_TARGET")
+                MTR_REPORT=$(timeout 40 mtr -4 -r -c 10 -w "$PING_TARGET")
                 echo -e "--- MTR IPv4 Report ---\n$MTR_REPORT\n-----------------------" >> "$INCIDENT_LOG"
             else
                 MTR_REPORT="(MTR not installed)"
@@ -188,8 +194,8 @@ if [ "$LOSS" -gt 0 ] || [ "$IS_HIGH_V4" -eq 1 ]; then
             fi
 
             if [ "$EMAIL_ALERTS" = "true" ] && [ -x "$EMAIL_MOD" ]; then
-                EMAIL_BODY="⚠️ Connection Instability Detected (IPv4)\n\nTarget: $PING_TARGET\nLatency: $AVG_PING ms (Threshold: $TRIGGER_LATENCY ms)\nPacket Loss: $LOSS%\n\n--- Diagnostic Report (MTR) ---\n$MTR_REPORT"
-                "$EMAIL_MOD" "Ping Alert (IPv4)" "$EMAIL_BODY"
+                EMAIL_BODY="⚠️ Connection Instability Detected ($LABEL_V4)\n\nTarget: $PING_TARGET\nLatency: $AVG_PING ms (Threshold: $TRIGGER_LATENCY ms)\nPacket Loss: $LOSS%\n\n--- Diagnostic Report (MTR) ---\n$MTR_REPORT"
+                "$EMAIL_MOD" "Ping Alert: $LABEL_V4" "$EMAIL_BODY"
             fi
         ) &
     fi
@@ -197,11 +203,11 @@ fi
 
 # --- Alert Logic IPv6 (Conditional) ---
 if [ "$ENABLE_IPV6" = "true" ]; then
-    IS_HIGH_V6=$(awk -v p="$AVG_PING_V6" -v t="$TRIGGER_LATENCY" 'BEGIN {print (p > t ? 1 : 0)}')
+    IS_HIGH_V6=$(awk -v p="$AVG_PING_V6" -v t="$TRIGGER_LATENCY" 'BEGIN {print (p != "NULL" && p+0 > t+0 ? 1 : 0)}')
     
-    if [ "$LOSS_V6" -gt 0 ] || [ "$IS_HIGH_V6" -eq 1 ]; then
+    if [ "$(awk -v l="$LOSS_V6" 'BEGIN{print(l+0>0)}')" = 1 ] || [ "$IS_HIGH_V6" -eq 1 ]; then
         echo " ! ALERT IPv6: Anomalous values detected."
-        LOG_MSG="[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ IPv6 Alert: Ping=$AVG_PING_V6 ms | Loss=$LOSS_V6%"
+        LOG_MSG="[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ $LABEL_V6 Alert: Ping=$AVG_PING_V6 ms | Loss=$LOSS_V6%"
         echo "$LOG_MSG" >> "$INCIDENT_LOG"
         
         COOLDOWN_FILE_V6="/tmp/ping_alert_v6.lock"
@@ -216,7 +222,7 @@ if [ "$ENABLE_IPV6" = "true" ]; then
             # Asynchronous subprocess: MTR and email sending happen in the background
             (
                 if command -v mtr >/dev/null 2>&1; then
-                    MTR_REPORT_V6=$(mtr -6 -r -c 10 -w "$PING_TARGET_V6")
+                    MTR_REPORT_V6=$(timeout 40 mtr -6 -r -c 10 -w "$PING_TARGET_V6")
                     echo -e "--- MTR IPv6 Report ---\n$MTR_REPORT_V6\n-----------------------" >> "$INCIDENT_LOG"
                 else
                     MTR_REPORT_V6="(MTR not installed)"
@@ -224,8 +230,8 @@ if [ "$ENABLE_IPV6" = "true" ]; then
                 fi
 
                 if [ "$EMAIL_ALERTS" = "true" ] && [ -x "$EMAIL_MOD" ]; then
-                    EMAIL_BODY="⚠️ Connection Instability Detected (IPv6)\n\nTarget: $PING_TARGET_V6\nLatency: $AVG_PING_V6 ms\nPacket Loss: $LOSS_V6%\n\n--- Diagnostic Report (MTR) ---\n$MTR_REPORT_V6"
-                    "$EMAIL_MOD" "Ping Alert (IPv6)" "$EMAIL_BODY"
+                    EMAIL_BODY="⚠️ Connection Instability Detected ($LABEL_V6)\n\nTarget: $PING_TARGET_V6\nLatency: $AVG_PING_V6 ms\nPacket Loss: $LOSS_V6%\n\n--- Diagnostic Report (MTR) ---\n$MTR_REPORT_V6"
+                    "$EMAIL_MOD" "Ping Alert: $LABEL_V6" "$EMAIL_BODY"
                 fi
             ) &
         fi
@@ -233,44 +239,117 @@ if [ "$ENABLE_IPV6" = "true" ]; then
 fi
 
 # ==============================================================================
+# Warning clearance is logged locally; only complete ping loss opens recovery mail state.
+# Legacy incident timestamps describe mixed warnings and must never imply an outage.
+for family in v4 v6; do
+    [ "$family" != v6 ] || [ "$ENABLE_IPV6" = true ] || continue
+    if [ "$family" = v4 ]; then
+        l=$LOSS; high=$IS_HIGH_V4; label=$LABEL_V4; target=$PING_TARGET
+    else
+        l=$LOSS_V6; high=${IS_HIGH_V6:-0}; label=$LABEL_V6; target=$PING_TARGET_V6
+    fi
+    state="$DB_DIR/incident_$family.ts"
+    outage_state="$DB_DIR/ping_unreachable_$family.state"
+    if [ "$(awk -v l="$l" -v h="$high" 'BEGIN{print(l+0>0 || h==1)}')" = 1 ]; then
+        if [ ! -f "$state" ]; then
+            printf '%s\n' "$NOW" > "$state"
+            [ ! -x /opt/bin/firewall_security ] || /opt/bin/bash /opt/bin/firewall_security event ping "$label instability detected" "Loss: $l%; latency threshold exceeded: $high" "$NOW" || :
+        fi
+    elif [ -f "$state" ]; then
+        message="$label ping warning cleared. Packet loss and latency are within thresholds."
+        printf '[%s] %s\n' "$(date '+%F %T')" "$message" >> "$INCIDENT_LOG"
+        [ ! -x /opt/bin/firewall_security ] || /opt/bin/bash /opt/bin/firewall_security event ping "$label warning cleared" "$message" "$NOW" || :
+        rm -f "$state"
+    fi
+    # Do not report recovery of a different target after configuration changes.
+    if [ -f "$outage_state" ] && [ "$(sed -n '2p' "$outage_state")" != "$target" ]; then
+        rm -f "$outage_state"
+    fi
+    if [ "$(awk -v l="$l" 'BEGIN{print(l+0>=100)}')" = 1 ]; then
+        if [ ! -f "$outage_state" ]; then
+            printf '%s\n%s\n' "$NOW" "$target" > "$outage_state"
+        fi
+    elif [ -f "$outage_state" ]; then
+        began=$(sed -n '1p' "$outage_state")
+        message=$(recovery_message "$label" "$began" "$NOW" "$target")
+        message="$message
+Current packet loss: $l%; latency threshold exceeded: $high."
+        printf '[%s] %s\n' "$(date '+%F %T')" "$message" >> "$INCIDENT_LOG"
+        [ ! -x /opt/bin/firewall_security ] || /opt/bin/bash /opt/bin/firewall_security event ping "$label target reachable again" "$message" "$NOW" || :
+        if [ "$EMAIL_ALERTS" = true ] && [ -x "$EMAIL_MOD" ]; then "$EMAIL_MOD" "Ping target reachable again: $label" "$message" & fi
+        rm -f "$outage_state"
+    fi
+done
+# ==============================================================================
+# PPP session events are collected by S95keentool-wan independently of ping sampling.
+# ==============================================================================
 # GENERATE DATA.JS
 # ==============================================================================
 echo -n " - Generating JSON data file (data.js)... "
 DATA_JS="$WEB_DIR/data.js"
+DATA_TMP=$(mktemp "$WEB_DIR/.data.XXXXXX") || exit 1
 DATE_UPDATE=$(date "+%d/%m/%Y %H:%M:%S")
 
-JSON_V4=$(sqlite3 "$DB_FILE" "SELECT timestamp, ping, jitter, loss FROM stats ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS;" | awk -F'|' '{printf "{x:%s000,p:%s,j:%s,l:%s},", $1, $2, $3, $4}' | sed 's/,$//')
-STATS_V4=$(sqlite3 "$DB_FILE" "SELECT AVG(ping), AVG(jitter), AVG(loss) FROM (SELECT ping, jitter, loss FROM stats ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS);")
-
-if [ "$ENABLE_IPV6" = "true" ]; then
-    JSON_V6=$(sqlite3 "$DB_FILE" "SELECT timestamp, ping, jitter, loss FROM stats_v6 ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS;" | awk -F'|' '{printf "{x:%s000,p:%s,j:%s,l:%s},", $1, $2, $3, $4}' | sed 's/,$//')
-    STATS_V6=$(sqlite3 "$DB_FILE" "SELECT AVG(ping), AVG(jitter), AVG(loss) FROM (SELECT ping, jitter, loss FROM stats_v6 ORDER BY timestamp DESC LIMIT $MAX_DISPLAY_POINTS);")
-    JS_V6_CONFIG="true"
-else
-    JSON_V6=""
-    STATS_V6="0|0|0"
-    JS_V6_CONFIG="false"
-fi
-
-cat <<EOF > "$DATA_JS"
+history_json() {
+    local table=$1 bucket=$2 since=$3
+    sqlite3 "$DB_FILE" "SELECT MAX(timestamp),AVG(ping),AVG(jitter),AVG(loss),MAX(ping),MAX(loss) FROM $table WHERE timestamp >= $since GROUP BY timestamp/$bucket ORDER BY MAX(timestamp);" |
+      awk -F'|' '{for(i=2;i<=6;i++)if($i=="")$i="null"; printf "{x:%s000,p:%s,j:%s,l:%s,peak:%s,maxLoss:%s},",$1,$2,$3,$4,$5,$6}' | sed 's/,$//'
+}
+[[ "$MAX_DISPLAY_POINTS" =~ ^[0-9]+$ ]] && [ "$MAX_DISPLAY_POINTS" -ge 100 ] && [ "$MAX_DISPLAY_POINTS" -le 10000 ] || MAX_DISPLAY_POINTS=2000
+period_json() {
+ local table=$1 since=$2
+ sqlite3 "$DB_FILE" "SELECT COUNT(*),AVG(ping),AVG(jitter),AVG(loss),MIN(timestamp),MAX(timestamp) FROM $table WHERE timestamp >= $since;" |
+ awk -F'|' '{for(i=2;i<=6;i++)if($i=="")$i="null";printf "{samples:%d,p:%s,j:%s,l:%s,first:%s,last:%s}",$1,$2,$3,$4,$5,$6}'
+}
+RANGES_V4=""; RANGES_V6=""; HIST_V4=""; HIST_V6=""; JS_V6_CONFIG=false
+for family in v4 v6;do
+ [ "$family" != v6 ] || [ "$ENABLE_IPV6" = true ] || continue
+ table=stats;[ "$family" != v6 ] || { table=stats_v6;JS_V6_CONFIG=true; }
+ hist="";periods=""
+ for range in 1 24 7 30 max;do
+  case "$range" in
+   1) since=$((NOW-3600));bucket=1;;
+   24) since=$((NOW-86400));bucket=60;;
+   7) since=$((NOW-604800));bucket=300;;
+   30) since=$((NOW-2592000));bucket=3600;;
+   max) since=0;bucket=3600;;
+  esac
+  first=$(sqlite3 "$DB_FILE" "SELECT MIN(timestamp) FROM $table WHERE timestamp >= $since;")
+  if [[ "$first" =~ ^[0-9]+$ ]];then
+   adaptive=$(((NOW-first)/(MAX_DISPLAY_POINTS-1)+1))
+   [ "$adaptive" -le "$bucket" ] || bucket=$adaptive
+  fi
+  key=$family;[ "$range" = 24 ] || key="${family}_$range"
+  hist="$hist$key:[$(history_json "$table" "$bucket" "$since")],"
+  periods="$periods\"$range\":$(period_json "$table" "$since"),"
+ done
+ if [ "$family" = v4 ];then HIST_V4=${hist%,};RANGES_V4=${periods%,}
+ else HIST_V6=${hist%,};RANGES_V6=${periods%,};fi
+done
+STATS_V4=$(sqlite3 "$DB_FILE" "SELECT AVG(ping),AVG(jitter),AVG(loss) FROM stats WHERE timestamp >= $((NOW-86400));")
+STATS_V6="0|0|0"
+[ "$ENABLE_IPV6" != true ] || STATS_V6=$(sqlite3 "$DB_FILE" "SELECT AVG(ping),AVG(jitter),AVG(loss) FROM stats_v6 WHERE timestamp >= $((NOW-86400));")
+PING_JS=${AVG_PING/NULL/null}; JITTER_JS=${JITTER/NULL/null}
+PING6_JS=${AVG_PING_V6/NULL/null}; JITTER6_JS=${JITTER_V6/NULL/null}
+cat <<EOF > "$DATA_TMP"
 window.PING_DATA = {
     updated: "$DATE_UPDATE",
     config: { ipv6: $JS_V6_CONFIG },
     targets: { v4: "$PING_TARGET", v6: "$PING_TARGET_V6" },
     current: {
-        v4: { ping: $AVG_PING, jitter: $JITTER, loss: $LOSS },
-        v6: { ping: $AVG_PING_V6, jitter: $JITTER_V6, loss: $LOSS_V6 }
+        v4: { ping: $PING_JS, jitter: $JITTER_JS, loss: $LOSS },
+        v6: { ping: $PING6_JS, jitter: $JITTER6_JS, loss: $LOSS_V6 }
     },
     averages: {
         v4: { p: "$(echo $STATS_V4 | cut -d'|' -f1 | awk '{printf "%.2f",$1}')", j: "$(echo $STATS_V4 | cut -d'|' -f2 | awk '{printf "%.2f",$1}')", l: "$(echo $STATS_V4 | cut -d'|' -f3 | awk '{printf "%.2f",$1}')" },
         v6: { p: "$(echo $STATS_V6 | cut -d'|' -f1 | awk '{printf "%.2f",$1}')", j: "$(echo $STATS_V6 | cut -d'|' -f2 | awk '{printf "%.2f",$1}')", l: "$(echo $STATS_V6 | cut -d'|' -f3 | awk '{printf "%.2f",$1}')" }
     },
-    history: {
-        v4: [$JSON_V4].reverse(),
-        v6: [$JSON_V6].reverse()
-    }
+    periods: {v4: {$RANGES_V4}, v6: {$RANGES_V6}},
+    history: {$HIST_V4${HIST_V6:+,}$HIST_V6}
 };
 EOF
+chmod 644 "$DATA_TMP" || { rm -f "$DATA_TMP"; exit 1; }
+mv "$DATA_TMP" "$DATA_JS"
 echo "Done."
 
 # ==============================================================================
@@ -278,16 +357,16 @@ echo "Done."
 # ==============================================================================
 HTML_FILE="$WEB_DIR/index.html"
 # Force regeneration to apply UI changes if requested
-if [ ! -f "$HTML_FILE" ] || [ "$FORCE_HTML_GEN" = "true" ]; then
+if [ ! -f "$HTML_FILE" ] || [ "$FORCE_HTML_GEN" = "true" ] || ! grep -q "KT-PING-2.0.0" "$HTML_FILE"; then
     echo " - Generating new HTML template (Keenetic UI)..."
 cat <<'HTML_EOF' > "$HTML_FILE"
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"><!-- KT-PING-2.0.0 -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Keenetic Dual-Stack Ping Monitor</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+    <link rel="icon" type="image/svg+xml" href="/assets/keentool.svg?v=1.0.0">
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     
     <script src="chart.js"></script>
@@ -349,7 +428,7 @@ cat <<'HTML_EOF' > "$HTML_FILE"
         .btn-home { text-decoration: none; font-size: 20px; border-right: 1px solid var(--stroke); padding-right: 12px; transition: opacity 0.2s; color: var(--primary-text); }
         .btn-home:hover { opacity: 0.7; }
         
-        .status-controls { display: flex; align-items: center; gap: 16px; }
+        .status-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
         
         /* Refresh Dropdown */
         .refresh-wrapper { position: relative; display: inline-flex; }
@@ -427,9 +506,13 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             .header-title { justify-content: center; }
             .status-controls { width: 100%; justify-content: center; }
         }
+        .status-controls .kt-peaks-control { margin: 0; font-size: 12px; white-space: nowrap; }
     </style>
+<script src="/assets/keentool-format.js?v=1.0.0"></script>
+<link rel="stylesheet" href="/assets/keentool-ui.css?v=1.0.0">
+<script defer src="/assets/keentool-ui.js?v=1.0.0"></script>
 </head>
-<body>
+<body class="kt-ui" data-kt-page="ping">
     <div class="container">
         <div class="status-bar">
             <h2 class="header-title">
@@ -439,28 +522,28 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             <div class="status-controls">
                 <div style="font-size: 14px; color: var(--text-gray);">Last Update: <span id="lastUpdate" style="font-weight:500; color:var(--primary-text)">Loading...</span></div>
                 <div class="refresh-wrapper">
-                    <select id="refresh_timer" class="refresh-select" onchange="changeRefreshRate(this.value)">
-                        <option value="0">Auto-Refresh: OFF</option>
-                        <option value="10000">10 Seconds</option>
-                        <option value="30000">30 Seconds</option>
-                        <option value="60000">1 Minute</option>
-                        <option value="300000">5 Minutes</option>
+                    <select id="history_range" class="refresh-select" aria-label="History range" title="Select the time range shown in charts and averages" onchange="changeHistory()">
+                        <option value="1">History: 1 hour</option>
+                        <option value="24" selected>History: 1 day</option>
+                        <option value="7">History: 7 days</option>
+                        <option value="30">History: 30 days</option>
+                        <option value="max">History: MAX</option>
                     </select>
                     <span class="refresh-arrow">▼</span>
                 </div>
-                <a href="javascript:location.reload()" class="btn-refresh">Refresh</a>
+                <label class="kt-list-note kt-peaks-control" title="Show the maximum latency and packet loss in each time bucket, in addition to the mean"><input type="checkbox" id="show_peaks" onchange="changeHistory()"> Show latency and packet-loss peaks</label>
             </div>
         </div>
 
         <div class="section-header v4">
             IPv4 Target: <span class="badge" id="targetV4"></span> 
-            <span class="samples" id="countV4"></span>
+            <span class="samples" title="Samples are original measurements; chart points are time-bucket averages." id="countV4"></span>
         </div>
         
         <div class="grid">
             <div class="card"><h2>Latency</h2><div class="val" style="color:var(--blue)" id="v4_p">-</div><div class="avg">Avg: <span id="v4_avg_p">-</span></div></div>
-            <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--orange)" id="v4_j">-</div><div class="avg">Avg: <span id="v4_avg_j">-</span></div></div>
-            <div class="card"><h2>Loss</h2><div class="val" style="color:var(--red)" id="v4_l">-</div><div class="avg">Avg: <span id="v4_avg_l">-</span></div></div>
+            <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--primary-text)" id="v4_j">-</div><div class="avg">Avg: <span id="v4_avg_j">-</span></div></div>
+            <div class="card"><h2>Loss</h2><div class="val" style="color:var(--primary-text)" id="v4_l">-</div><div class="avg">Avg: <span id="v4_avg_l">-</span></div></div>
         </div>
         
         <div class="chart-box">
@@ -493,13 +576,13 @@ cat <<'HTML_EOF' > "$HTML_FILE"
         <div id="ipv6_section">
             <div class="section-header v6">
                 IPv6 Target: <span class="badge" id="targetV6"></span>
-                <span class="samples" id="countV6"></span>
+                <span class="samples" title="Samples are original measurements; chart points are time-bucket averages." id="countV6"></span>
             </div>
             
             <div class="grid">
                 <div class="card"><h2>Latency</h2><div class="val" style="color:var(--teal)" id="v6_p">-</div><div class="avg">Avg: <span id="v6_avg_p">-</span></div></div>
-                <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--purple)" id="v6_j">-</div><div class="avg">Avg: <span id="v6_avg_j">-</span></div></div>
-                <div class="card"><h2>Loss</h2><div class="val" style="color:var(--darkred)" id="v6_l">-</div><div class="avg">Avg: <span id="v6_avg_l">-</span></div></div>
+                <div class="card"><h2>Jitter</h2><div class="val" style="color:var(--primary-text)" id="v6_j">-</div><div class="avg">Avg: <span id="v6_avg_j">-</span></div></div>
+                <div class="card"><h2>Loss</h2><div class="val" style="color:var(--primary-text)" id="v6_l">-</div><div class="avg">Avg: <span id="v6_avg_l">-</span></div></div>
             </div>
 
             <div class="chart-box">
@@ -531,10 +614,13 @@ cat <<'HTML_EOF' > "$HTML_FILE"
         </div>
     </div>
 
+    <p style="color:var(--text-gray);font-size:12px">Averages use all original samples in the selected period. Chart points group samples over time; MAX covers retained history.</p>
+    <div id="ping_coverage" class="kt-list-note" style="white-space:pre-line"></div>
     <script src="data.js"></script>
 
     <script>
         const commonOptions = {
+            locale:window.KTFormat.locale,
             responsive: true, maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             plugins: {
@@ -573,20 +659,25 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             } 
         }
 
-        let refreshIntervalId = null;
-        
-        function changeRefreshRate(msStr) {
-            localStorage.setItem('ping_refresh_rate', msStr);
-            if (refreshIntervalId) clearInterval(refreshIntervalId);
-            const ms = parseInt(msStr);
-            if (ms > 0) {
-                refreshIntervalId = setInterval(() => location.reload(), ms);
-            }
-        }
 
+        
+
+        function selectedHistory(f) { const r=(document.getElementById('history_range')||{}).value||'24'; return window.PING_DATA.history[f+(r==='24'?'':'_'+r)]||[]; }
+        function changeHistory() { localStorage.setItem('ping_show_peaks', document.getElementById('show_peaks').checked ? '1' : '0'); localStorage.setItem('ping_history_range', document.getElementById('history_range').value); document.querySelectorAll('canvas').forEach(c=>{const chart=Chart.getChart(c);if(chart)chart.destroy();}); render(); }
         function render() {
             if(typeof window.PING_DATA === 'undefined') return;
             const d = window.PING_DATA;
+            const range = document.getElementById('history_range').value;
+            const period = f => (d.periods[f] || {})[range] || {samples:0,p:null,j:null,l:null};
+            const coverageLine = (family, label) => {
+                const selected = period(family);
+                if (!selected.samples || selected.first == null || selected.last == null) return label + ' coverage: No samples in this period';
+                return label + ' coverage: ' + new Date(selected.first * 1000).toLocaleString('en-GB') + ' — ' + new Date(selected.last * 1000).toLocaleString('en-GB');
+            };
+            const coverage = [coverageLine('v4', 'IPv4')];
+            if (d.config.ipv6) coverage.push(coverageLine('v6', 'IPv6'));
+            document.getElementById('ping_coverage').textContent = coverage.join('\n');
+            const metric = (v, unit) => v === null ? 'Unavailable' : window.KTFormat.number(v,2,2) + unit;
 
             // HIDE IPv6 IF DISABLED IN CONFIG
             if (!d.config.ipv6) {
@@ -597,65 +688,77 @@ cat <<'HTML_EOF' > "$HTML_FILE"
             document.getElementById('targetV4').innerText = d.targets.v4;
             
             // Populate Sample Counts
-            document.getElementById('countV4').innerText = "(" + d.history.v4.length + " samples)";
+            document.getElementById('countV4').innerText = "(" + window.KTFormat.integer(period('v4').samples) + " samples; " + window.KTFormat.integer(selectedHistory('v4').length) + " chart points)";
 
             // Update DOM V4
-            document.getElementById('v4_p').innerText = d.current.v4.ping + " ms";
-            document.getElementById('v4_j').innerText = d.current.v4.jitter + " ms";
-            document.getElementById('v4_l').innerText = d.current.v4.loss + " %";
-            document.getElementById('v4_avg_p').innerText = d.averages.v4.p + " ms";
-            document.getElementById('v4_avg_j').innerText = d.averages.v4.j + " ms";
-            document.getElementById('v4_avg_l').innerText = d.averages.v4.l + " %";
+            document.getElementById('v4_p').innerText = (d.current.v4.ping === null ? "Unavailable" : window.KTFormat.number(d.current.v4.ping,0,3) + " ms");
+            document.getElementById('v4_j').innerText = (d.current.v4.jitter === null ? "Unavailable" : window.KTFormat.number(d.current.v4.jitter,0,3) + " ms");
+            document.getElementById('v4_l').innerText = window.KTFormat.number(d.current.v4.loss,0,3) + " %";
+            document.getElementById('v4_l').style.color = Number(d.current.v4.loss) > 0 ? 'var(--red)' : 'var(--primary-text)';
+            document.getElementById('v4_avg_p').innerText = metric(period('v4').p, ' ms');
+            document.getElementById('v4_avg_j').innerText = metric(period('v4').j, ' ms');
+            document.getElementById('v4_avg_l').innerText = metric(period('v4').l, ' %');
 
             const createChart = (id, dArr, color, isBar=false) => {
                 if(!document.getElementById(id)) return; // Skip if element hidden/missing
-                new Chart(document.getElementById(id), {
+                const config={
                     type: isBar ? 'bar' : 'line',
                     data: { datasets: [{ 
-                        data: dArr, 
+                        label: 'Mean', data: dArr, 
                         borderColor: color, backgroundColor: color, 
                         borderWidth: 1.5, fill: false 
-                    }] },
+                    }, ...(document.getElementById('show_peaks').checked && /^c_[pl]/.test(id) ? [{label:'Peak',type:'line',data:dArr.map(i=>({x:i.x,y:id.startsWith('c_p')?i.peak:i.maxLoss})),borderColor:'#de3d3d',backgroundColor:'#de3d3d',borderDash:[4,3],borderWidth:1,fill:false,pointRadius:0}] : [])] },
                     options: commonOptions
-                });
+                };
+                const existing=Chart.getChart(id);
+                if(existing){existing.data=config.data;existing.update('none');}
+                else new Chart(document.getElementById(id),config);
             };
 
             const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
             const cBlue = isDark ? '#77bce4' : '#0097dc';
             const cRed = isDark ? '#ea4c4c' : '#de3d3d';
 
-            createChart('c_p4', d.history.v4.map(i=>({x:i.x, y:i.p})), cBlue);
-            createChart('c_j4', d.history.v4.map(i=>({x:i.x, y:i.j})), '#fd7e14');
-            createChart('c_l4', d.history.v4.map(i=>({x:i.x, y:i.l})), cRed, true);
+            createChart('c_p4', selectedHistory('v4').map(i=>({...i,x:i.x, y:i.p})), cBlue);
+            createChart('c_j4', selectedHistory('v4').map(i=>({...i,x:i.x, y:i.j})), '#fd7e14');
+            createChart('c_l4', selectedHistory('v4').map(i=>({...i,x:i.x, y:i.l})), cRed, true);
 
             // ONLY RENDER IPv6 IF ENABLED
             if (d.config.ipv6) {
                 document.getElementById('targetV6').innerText = d.targets.v6;
-                document.getElementById('countV6').innerText = "(" + d.history.v6.length + " samples)";
+                document.getElementById('countV6').innerText = "(" + window.KTFormat.integer(period('v6').samples) + " samples; " + window.KTFormat.integer(selectedHistory('v6').length) + " chart points)";
                 
-                document.getElementById('v6_p').innerText = d.current.v6.ping + " ms";
-                document.getElementById('v6_j').innerText = d.current.v6.jitter + " ms";
-                document.getElementById('v6_l').innerText = d.current.v6.loss + " %";
-                document.getElementById('v6_avg_p').innerText = d.averages.v6.p + " ms";
-                document.getElementById('v6_avg_j').innerText = d.averages.v6.j + " ms";
-                document.getElementById('v6_avg_l').innerText = d.averages.v6.l + " %";
+                document.getElementById('v6_p').innerText = (d.current.v6.ping === null ? "Unavailable" : window.KTFormat.number(d.current.v6.ping,0,3) + " ms");
+                document.getElementById('v6_j').innerText = (d.current.v6.jitter === null ? "Unavailable" : window.KTFormat.number(d.current.v6.jitter,0,3) + " ms");
+                document.getElementById('v6_l').innerText = window.KTFormat.number(d.current.v6.loss,0,3) + " %";
+            document.getElementById('v6_l').style.color = Number(d.current.v6.loss) > 0 ? 'var(--red)' : 'var(--primary-text)';
+                document.getElementById('v6_avg_p').innerText = metric(period('v6').p, ' ms');
+                document.getElementById('v6_avg_j').innerText = metric(period('v6').j, ' ms');
+                document.getElementById('v6_avg_l').innerText = metric(period('v6').l, ' %');
 
-                createChart('c_p6', d.history.v6.map(i=>({x:i.x, y:i.p})), '#20c997');
-                createChart('c_j6', d.history.v6.map(i=>({x:i.x, y:i.j})), '#6f42c1');
-                createChart('c_l6', d.history.v6.map(i=>({x:i.x, y:i.l})), '#b02a37', true);
+                createChart('c_p6', selectedHistory('v6').map(i=>({...i,x:i.x, y:i.p})), '#20c997');
+                createChart('c_j6', selectedHistory('v6').map(i=>({...i,x:i.x, y:i.j})), '#6f42c1');
+                createChart('c_l6', selectedHistory('v6').map(i=>({...i,x:i.x, y:i.l})), '#b02a37', true);
             }
 
             document.querySelectorAll('canvas').forEach(c => { c.ondblclick = () => Chart.getChart(c).resetZoom(); });
             
-            // Set Refresh Rate from LocalStorage
-            const savedMs = localStorage.getItem('ping_refresh_rate') || "0";
-            document.getElementById('refresh_timer').value = savedMs;
-            changeRefreshRate(savedMs);
         }
+        window.ktRefreshPage=async()=>{
+            const response=await fetch('data.js?t='+Date.now(),{cache:'no-store'});
+            if(!response.ok)throw Error('Connection data unavailable');
+            window.eval(await response.text());
+            render();
+        };
+        document.getElementById('show_peaks').checked = localStorage.getItem('ping_show_peaks') === '1';
+        const savedRange = localStorage.getItem('ping_history_range');
+        if (['1','24','7','30','max'].includes(savedRange)) document.getElementById('history_range').value = savedRange;
         render();
     </script>
+<footer class="kt-page-footer">&copy; <span data-kt-year>2026</span> mattheweli<span class="kt-footer-meta">Pingtool 2.0.0</span></footer>
 </body>
 </html>
 HTML_EOF
 chmod 644 "$HTML_FILE"
 fi
+
