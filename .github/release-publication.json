@@ -1,0 +1,22 @@
+{
+  "repository": "mattheweli/keenetic-pingtool",
+  "release_id": 424367494,
+  "tag": "v2.0.2",
+  "target": "7d62b4de18c495c6865bd2176b10955dd9e1ec03",
+  "validated_run": 40341970111,
+  "pr": 3,
+  "operation_ref": "refs/heads/operations/publish-ping-mail-20261026",
+  "merge": true,
+  "base_commit": "f4dd51d49084909b25407e87424074cede029c47",
+  "source_tree": "95f2d542e7880e6dec1484de5bdafc3b44cc018d",
+  "assets": {
+    "keenetic-pingtool-2.0.2-sources.tar.gz": {
+      "size": 143174,
+      "digest": "sha256:082f85438a16d6a3bed2ed1598f69b9359bdc10acf841735a5c91cd234f72035"
+    },
+    "keenetic-pingtool-2.0.2-sources.tar.gz.sha256": {
+      "size": 105,
+      "digest": "sha256:31c44ad89ef3d75faca46136730a7649d3e4679ab75277990ad833689be04d22"
+    }
+  }
+}
